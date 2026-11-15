@@ -4,7 +4,7 @@ Lire aussi `AGENTS.md` (règles Expo génériques : docs versionnées, `npx expo
 
 ## Le produit
 
-App mobile perso d'**inventaire de la maison**. L'utilisateur décrit son logement en 3 niveaux :
+App mobile perso d'**inventaire de la maison**, nommée **« Chez Moi »** sur le téléphone (`app.json > name`). L'utilisateur décrit son logement en 3 niveaux :
 
 1. **Pièces** (Cuisine, Salon, Garage…)
 2. **Rangements / meubles** dans chaque pièce (Frigo, Placard, Armoire, Tiroir…) — appelés `furniture` dans le code
@@ -23,6 +23,7 @@ App mobile perso d'**inventaire de la maison**. L'utilisateur décrit son logeme
 - **expo-sqlite** (base `inventaire.db`) — choisi plutôt qu'AsyncStorage/JSON car données relationnelles (cascade, requêtes transversales, écritures ciblées, transactions, migrations). SQL écrit à la main, pas d'ORM (Drizzle envisageable plus tard).
 - expo-camera (scan code-barres), expo-file-system (nouvelle API `File` / `Paths`), expo-sharing, expo-document-picker
 - Icônes : composant unique `Icon` (`src/ui/icon.tsx`, rendu via `SvgXml` de react-native-svg). **Fluent Emoji Flat** (illustrations en couleur) en majorité, **Phosphor** pour les glyphes d'interface manquants (+, −, chevron, corbeille, partage…). Seules les icônes listées dans `scripts/build-icons.mjs` sont embarquées : ajouter une clé puis `node scripts/build-icons.mjs` (régénère `src/ui/icons-data.ts`, ne pas l'éditer à la main).
+- Icône de l'app + splash : illustrations sources dans `assets/source/` (`icon.png` opaque fond Lagon, `icon-transparent.png` détourée). `node scripts/build-app-icons.mjs` (via `@resvg/resvg-js`, dev) régénère `assets/images/` : icône, couches de l'icône adaptative Android (sujet dans les 56 % centraux), icône monochrome (contours), splash (fond crème) et favicon.
 - Police : `@expo-google-fonts/fredoka`, chargée dans `_layout.tsx` (splash maintenu jusqu'au chargement). Sur Android, une graisse = une famille : utiliser `fonts.*` / `font.*` de `theme.ts`, jamais `fontWeight`.
 - Tous les modules natifs utilisés sont inclus dans **Expo Go** : garder ça vrai tant que possible (sinon il faudra un dev build).
 - Pas de date picker natif : dates saisies en `JJ/MM/AAAA` + raccourcis (+3 j, +1 mois…).
@@ -125,7 +126,7 @@ src/
 
 ## Idées pour la suite (non faites)
 
-- Icône et splash de l'app dans la DA « Village », mode sombre « soirée »
+- Mode sombre « soirée »
 - Photos d'objets, réordonner pièces/meubles par glisser-déposer, déplacer un meuble vers une autre pièce (`moveFurniture` existe déjà dans `queries.ts`)
 - Notifications locales avant péremption
-- Build APK via EAS (`eas.json` avec profil `preview` / `buildType: "apk"`)
+- Build APK via EAS : `eas.json` prêt (profil `preview` = APK) → `eas init` puis `eas build -p android --profile preview`

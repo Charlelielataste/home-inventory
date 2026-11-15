@@ -83,7 +83,13 @@ src/
 - `known_products(name PK COLLATE NOCASE, unit, category, subcategory, barcode, use_count, last_used)` : historique de saisie → alimente l'autocomplétion et sert de cache hors ligne des codes-barres déjà scannés. Mis à jour (upsert) à chaque enregistrement d'objet.
 
 `PRAGMA foreign_keys = ON` est activé dans `migrate()` (indispensable pour les cascades).
-**Pas encore en production** : les données sur le téléphone ne sont que des tests, donc **pas de migrations ni de compatibilité ascendante** à maintenir. Faire évoluer le schéma = modifier `SCHEMA` dans `schema.ts` et incrémenter `DB_VERSION` → la base est supprimée et recréée au lancement suivant. Penser à mettre à jour `backup.ts` (colonnes exportées/importées). Avant la mise en prod : repasser à de vraies migrations incrémentales.
+
+**L'app est entre les mains de testeurs : leurs données doivent survivre à chaque mise à jour.**
+- Schéma = **migrations incrémentales** dans `MIGRATIONS` (`schema.ts`), clé = version cible, version courante dans `PRAGMA user_version`. La v4 est la base (premier APK distribué) ; une nouvelle install l'exécute puis toutes les suivantes.
+- Faire évoluer le schéma = **ajouter** une migration `N+1` (jamais modifier une migration déjà livrée dans un build). Préférer `ADD COLUMN` / `CREATE` ; changer une colonne = reconstruire la table (créer → copier → supprimer → renommer).
+- Tester la montée de version depuis une base existante (pas seulement une install neuve).
+- `backup.ts` : mettre à jour les colonnes exportées/importées ; l'import doit continuer à lire les anciennes sauvegardes (colonnes absentes → valeurs par défaut). Incrémenter `BACKUP_VERSION` seulement si le format change.
+- Ne jamais changer `android.package` ni la clé de signature (gérée par EAS) : sinon impossible d'installer la mise à jour par-dessus. `versionCode` auto-incrémenté par EAS à chaque build.
 
 ## Règles métier
 
@@ -118,6 +124,10 @@ src/
 - Navigation : `router.push({ pathname: '/room/[id]', params: { id } })` (forme objet, compatible typed routes).
 - Pas de nouvelle dépendance sans vérifier qu'elle est dans Expo Go et l'installer via `npx expo install`.
 
+## Build et distribution
+
+- Projet EAS `@hawkcio/inventaire-maison`. APK testeurs : `npx eas-cli@latest build -p android --profile preview` (lien d'installation sur expo.dev). Profil `production` = AAB pour le Play Store (pas encore utilisé).
+
 ## Décisions prises avec l'utilisateur
 
 - Onglet Rechercher conservé, **recherche limitée aux objets** (pas les pièces ni les meubles).
@@ -129,4 +139,3 @@ src/
 - Mode sombre « soirée »
 - Photos d'objets, réordonner pièces/meubles par glisser-déposer, déplacer un meuble vers une autre pièce (`moveFurniture` existe déjà dans `queries.ts`)
 - Notifications locales avant péremption
-- Build APK via EAS : `eas.json` prêt (profil `preview` = APK) → `eas init` puis `eas build -p android --profile preview`

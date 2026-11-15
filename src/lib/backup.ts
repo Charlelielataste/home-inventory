@@ -12,9 +12,15 @@ import { todayIso } from './dates';
  * (Drive, email…) or move it to another device.
  */
 
+/**
+ * Backup file format. Testers keep their exports: bump it only when the format
+ * changes, and keep importing every older version.
+ */
+const BACKUP_VERSION = 1;
+
 type Backup = {
   app: 'inventaire-maison';
-  version: 1;
+  version: number;
   exported_at: string;
   rooms: Record<string, unknown>[];
   furniture: Record<string, unknown>[];
@@ -25,7 +31,7 @@ type Backup = {
 export async function exportBackup(db: SQLiteDatabase) {
   const backup: Backup = {
     app: 'inventaire-maison',
-    version: 1,
+    version: BACKUP_VERSION,
     exported_at: new Date().toISOString(),
     rooms: await db.getAllAsync('SELECT * FROM rooms'),
     furniture: await db.getAllAsync('SELECT * FROM furniture'),
@@ -65,15 +71,22 @@ export async function pickBackup(): Promise<Backup | null> {
   if (data?.app !== 'inventaire-maison' || !Array.isArray(data.rooms) || !Array.isArray(data.items)) {
     throw new Error("Ce fichier n'est pas une sauvegarde de l'inventaire.");
   }
+  if (typeof data.version === 'number' && data.version > BACKUP_VERSION) {
+    throw new Error("Cette sauvegarde vient d'une version plus récente de l'app : mets l'app à jour pour l'importer.");
+  }
   return data;
 }
 
+/**
+ * Inserts the known columns present in each row. Columns missing from the backup
+ * (older format) are left out, so the table defaults apply instead of NULL.
+ */
 async function insertRows(db: SQLiteDatabase, table: string, columns: string[], rows: Record<string, unknown>[]) {
-  const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`;
   for (const row of rows) {
+    const present = columns.filter((c) => row[c] !== undefined);
     await db.runAsync(
-      sql,
-      columns.map((c) => (row[c] ?? null) as string | number | null),
+      `INSERT INTO ${table} (${present.join(', ')}) VALUES (${present.map(() => '?').join(', ')})`,
+      present.map((c) => row[c] as string | number | null),
     );
   }
 }

@@ -1,7 +1,7 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AutocompleteInput } from '@/components/autocomplete-input';
@@ -36,7 +36,7 @@ import {
 import { lookupBarcode } from '@/lib/openfoodfacts';
 import { capitalize } from '@/lib/text';
 import { formatNumber, formatQuantity, getUnit, isUnitKey, parseNumber, type UnitKey, UNITS } from '@/lib/units';
-import { Button, Checkbox, Chip, ChipRow, confirm, IconButton, ListRow, TextField } from '@/ui/components';
+import { Button, Checkbox, Chip, ChipRow, confirm, DialogHost, IconButton, ListRow, showDialog, showMessage, TextField } from '@/ui/components';
 import { colors, font, fonts, spacing } from '@/ui/theme';
 
 const EXPIRY_SHORTCUTS: [string, Parameters<typeof addToToday>[0]][] = [
@@ -191,11 +191,11 @@ export default function ItemScreen() {
     const quantity = parseNumber(quantityText);
     const min = minText.trim() ? parseNumber(minText) : null;
 
-    if (!cleanName) return Alert.alert('Nom manquant', "Donne un nom à l'objet.");
-    if (quantity === null || quantity < 0) return Alert.alert('Quantité invalide', 'Saisis un nombre positif.');
-    if (minText.trim() && (min === null || min < 0)) return Alert.alert('Seuil invalide', 'Saisis un nombre positif.');
-    if (expiresText.trim() && !expiresIso) return Alert.alert('Date invalide', 'Format attendu : JJ/MM/AAAA.');
-    if (!furnitureId) return Alert.alert('Emplacement manquant', 'Choisis où est rangé cet objet.');
+    if (!cleanName) return showMessage('Nom manquant', "Donne un nom à l'objet.");
+    if (quantity === null || quantity < 0) return showMessage('Quantité invalide', 'Saisis un nombre positif.');
+    if (minText.trim() && (min === null || min < 0)) return showMessage('Seuil invalide', 'Saisis un nombre positif.');
+    if (expiresText.trim() && !expiresIso) return showMessage('Date invalide', 'Format attendu : JJ/MM/AAAA.');
+    if (!furnitureId) return showMessage('Emplacement manquant', 'Choisis où est rangé cet objet.');
 
     const input: ItemInput = {
       furniture_id: furnitureId,
@@ -221,11 +221,18 @@ export default function ItemScreen() {
       await createItem(db, input);
       return finish(input);
     }
-    Alert.alert(
-      'Déjà présent',
-      `« ${duplicate.name} » est déjà ici (${formatQuantity(duplicate.quantity, duplicate.unit)}). Ajouter ${formatQuantity(quantity, unit)} au stock existant ?`,
-      [
-        { text: 'Annuler', style: 'cancel' },
+    showDialog({
+      title: 'Déjà présent',
+      message: `« ${duplicate.name} » est déjà ici (${formatQuantity(duplicate.quantity, duplicate.unit)}). Ajouter ${formatQuantity(quantity, unit)} au stock existant ?`,
+      buttons: [
+        {
+          text: 'Additionner',
+          style: 'primary',
+          onPress: async () => {
+            await mergeIntoItem(db, duplicate.id, input);
+            finish(input);
+          },
+        },
         {
           text: 'Créer à part',
           onPress: async () => {
@@ -233,15 +240,9 @@ export default function ItemScreen() {
             finish(input);
           },
         },
-        {
-          text: 'Additionner',
-          onPress: async () => {
-            await mergeIntoItem(db, duplicate.id, input);
-            finish(input);
-          },
-        },
+        { text: 'Annuler', style: 'cancel' },
       ],
-    );
+    });
   };
 
   const remove = () =>
@@ -391,9 +392,11 @@ export default function ItemScreen() {
               setThawNote(null);
             }}
           />
-          {!!frozenAt && (
-            <Text style={[font.small, { color: colors.textMuted }]}>{frozenHint(frozenAt)}</Text>
-          )}
+          <Text style={[font.small, { color: colors.textMuted }]}>
+            {frozenAt
+              ? frozenHint(frozenAt)
+              : `À cocher si tu l’as mis toi-même au congélateur : la péremption n’est plus surveillée et tu seras prévenu après ${FREEZER_WARNING_MONTHS} mois. Acheté déjà surgelé ? Choisis plutôt la catégorie « Surgelés ».`}
+          </Text>
           {!!thawNote && <Text style={[font.small, { color: colors.textMuted }]}>{thawNote}</Text>}
         </View>
 
@@ -460,6 +463,8 @@ export default function ItemScreen() {
         }}
         onClose={() => setPickerOpen(false)}
       />
+      {/* Native modal screen: needs its own host on iOS (see DialogHost) */}
+      <DialogHost />
     </KeyboardAvoidingView>
   );
 }

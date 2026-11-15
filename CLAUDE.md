@@ -12,7 +12,7 @@ App mobile perso d'**inventaire de la maison**, nommée **« Chez Moi »** sur l
 
 - **Cible : Android uniquement.** iOS sert seulement à tester (iPhone via Expo Go ou Xcode) : ne pas ajouter de fonctionnalité spécifique iOS, mais l'app doit rester utilisable sur iPhone pour les tests.
 - **100 % local et hors ligne** : aucune donnée ne quitte le téléphone, pas de compte, pas de backend.
-- **Direction artistique « Village »** : cozy, chaleureuse, arrondie (esprit jeu de simulation de vie, sans reprendre d'assets existants). Fond crème, texte brun bois, accent **Lagon** (`#2E4A5E`), pastels derrière les illustrations, cartes et boutons avec une « épaisseur » en bas qui s'enfonce à l'appui. Typo **Fredoka**. Toutes les couleurs, espacements et typos passent par `src/ui/theme.ts` ; ne jamais coder une couleur en dur dans un écran.
+- **Direction artistique « Village »** : cozy, chaleureuse, arrondie (esprit jeu de simulation de vie, sans reprendre d'assets existants). Fond crème, texte brun bois, accent **Lagon** (`#2E4A5E`), pastels derrière les illustrations, cartes et boutons avec une « épaisseur » en bas qui s'enfonce à l'appui (`depth()` / `sunk()` de `theme.ts`, une ombre décalée : jamais de `borderBottom`, qui s'amincit en croissant dans les coins arrondis). L'ombre ne prend pas de place : un élément opaque juste en dessous la masque (d'où `SectionTitle` transparent, opaque seulement avec `sticky`). Typo **Fredoka**. Toutes les couleurs, espacements et typos passent par `src/ui/theme.ts` ; ne jamais coder une couleur en dur dans un écran.
 - Langue de l'UI : **français**, tutoiement.
 - Langue du **code : anglais** — identifiants, composants, commentaires (y compris SQL). Seuls les textes affichés dans l'app (et les exemples qui les citent entre guillemets) restent en français.
 
@@ -22,6 +22,7 @@ App mobile perso d'**inventaire de la maison**, nommée **« Chez Moi »** sur l
 - **Expo Router** (routes dans `src/app/`), typed routes activées
 - **expo-sqlite** (base `inventaire.db`) — choisi plutôt qu'AsyncStorage/JSON car données relationnelles (cascade, requêtes transversales, écritures ciblées, transactions, migrations). SQL écrit à la main, pas d'ORM (Drizzle envisageable plus tard).
 - expo-camera (scan code-barres), expo-file-system (nouvelle API `File` / `Paths`), expo-sharing, expo-document-picker
+- expo-notifications : **notifications locales uniquement** (pas de push, pas de serveur). Fonctionne dans Expo Go Android (avertissement « push indisponible » en console : normal). Petite icône Android = `assets/images/notification-icon.png` (silhouette blanche, générée par `build-app-icons.mjs`).
 - Icônes : composant unique `Icon` (`src/ui/icon.tsx`, rendu via `SvgXml` de react-native-svg). **Fluent Emoji Flat** (illustrations en couleur) en majorité, **Phosphor** pour les glyphes d'interface manquants (+, −, chevron, corbeille, partage…). Seules les icônes listées dans `scripts/build-icons.mjs` sont embarquées : ajouter une clé puis `node scripts/build-icons.mjs` (régénère `src/ui/icons-data.ts`, ne pas l'éditer à la main).
 - Icône de l'app + splash : illustrations sources dans `assets/source/` (`icon.png` opaque fond Lagon, `icon-transparent.png` détourée). `node scripts/build-app-icons.mjs` (via `@resvg/resvg-js`, dev) régénère `assets/images/` : icône, couches de l'icône adaptative Android (sujet dans les 56 % centraux), icône monochrome (contours), splash (fond crème) et favicon.
 - Police : `@expo-google-fonts/fredoka`, chargée dans `_layout.tsx` (splash maintenu jusqu'au chargement). Sur Android, une graisse = une famille : utiliser `fonts.*` / `font.*` de `theme.ts`, jamais `fontWeight`.
@@ -42,21 +43,22 @@ npx expo export --platform android   # vérifie que le bundle Android compile
 ```
 src/
   app/
-    _layout.tsx            Chargement Fredoka + SQLiteProvider (onInit = migrate) + ThemeProvider + Stack racine
-    (tabs)/_layout.tsx     Onglets JS (expo-router/js-tabs) : Chez moi, Rechercher, Courses, Péremption, Réglages
-    (tabs)/index.tsx       Bandeau résumé + grille de pièces (Tile), FAB +, appui long = renommer/supprimer, "Créer les pièces de base"
+    _layout.tsx            Chargement Fredoka + SQLiteProvider (onInit = migrate, enableChangeListener) + AlertsProvider + ThemeProvider + Stack racine
+    (tabs)/_layout.tsx     Onglets JS (expo-router/js-tabs) : Chez moi, Rechercher, Courses, Péremption, Réglages ; pastilles de compteur ; appui sur une notification → onglet Péremption
+    (tabs)/index.tsx       Bandeau d'alertes cliquable (une ligne par type) + grille de pièces (Tile), FAB +, appui long = renommer/supprimer, "Créer les pièces de base"
     (tabs)/search.tsx      Recherche d'OBJETS uniquement (nom, catégorie, notes) dans toute la maison
-    (tabs)/shopping.tsx    Onglet Courses : objets en stock bas, liste partageable
-    (tabs)/alerts.tsx      Onglet Péremption : périmés, bientôt périmés (7 j)
-    (tabs)/settings.tsx    Stats, export/import JSON, vider l'historique de saisie, tout effacer
+    (tabs)/shopping.tsx    Onglet Courses : objets en stock bas, liste partageable, panier par ligne (remise en stock) ; sélection → supprimer
+    (tabs)/alerts.tsx      Onglet Péremption : périmés, bientôt périmés (7 j), congelés depuis 3 mois ; quantité affichée sans − / + (inutile ici) ; sélection → supprimer / ignorer
+    (tabs)/settings.tsx    Stats, rappels (permission notifications), export/import JSON, vider l'historique de saisie, tout effacer
     room/[id].tsx          Rangements d'une pièce
-    furniture/[id].tsx     Objets d'un rangement, boutons − / +, filtre si > 8 objets
+    furniture/[id].tsx     Objets d'un rangement, boutons − / +, filtre si > 8 objets ; appui long = mode sélection → suppression groupée
     item/[id].tsx          Formulaire objet en modal ; id = "new" (+ param furnitureId) pour créer
   components/
     autocomplete-input.tsx Champ nom d'objet + autocomplétion (historique puis dictionnaire)
     barcode-scanner.tsx    Modal caméra (EAN-13/8, UPC-A/E)
     location-picker.tsx    Choix / déplacement du rangement d'un objet (SectionList par pièce)
     item-row.tsx           Ligne objet réutilisée partout (quantité, badges, − / + via onChanged, action optionnelle)
+    selection.tsx          Sélection multiple : useSelection() (état, en-tête, retour Android), SelectionBar, confirmDeleteItems()
   db/
     schema.ts              Schéma + version (PRAGMA user_version) ; base recréée si la version change
     queries.ts             Toutes les requêtes + types (Room, Furniture, Item, KnownProduct…)
@@ -68,11 +70,14 @@ src/
     openfoodfacts.ts       Lookup code-barres OFF → Open Beauty Facts → Open Products Facts
     backup.ts              Export / import JSON
     use-query.ts           Hook useQuery(loader, key) : charge depuis SQLite et recharge au focus de l'écran
+    alerts.tsx             AlertsProvider / useAlerts() / alertCounts() : alertes partagées (bandeau, pastilles), recalculées à chaque écriture SQLite et au retour au premier plan
+    reminders.ts           Notifications locales : planReminders() (pur) + syncReminders(db) qui reprogramme tout
   ui/
     theme.ts               Couleurs, tints pastel (tintFor), tons des badges, spacing, radius, fonts/font, card
     icon.tsx               Composant Icon (SVG) ; icons-data.ts = généré par scripts/build-icons.mjs
     components.tsx         Button, IconButton, Fab, TextField, Chip, ChipRow, ListRow, Tile, IconTile, Badge, SectionTitle,
-                           Separator, EmptyState, SuggestionDropdown, PromptModal, confirm, showRenameDeleteMenu
+                           Separator, EmptyState, SuggestionDropdown, PromptModal, CheckMark, Checkbox,
+                           DialogHost, showDialog, showMessage, confirm, showRenameDeleteMenu
 ```
 
 ## Modèle de données (SQLite)
@@ -100,9 +105,14 @@ src/
 - **Sortie du congélateur** : déplacer un objet congelé vers un rangement qui n'est pas un congélateur décoche « Congelé » et met la péremption à aujourd'hui + `THAWED_SHELF_DAYS` (2 j, recommandation 24-48 h après décongélation).
 - **Rappel de congélation** : congelé depuis plus de `FREEZER_WARNING_MONTHS` (3) mois → section dédiée dans l'onglet Péremption + badge « CONGELÉ DEPUIS N MOIS ». Bouton « Ignorer » = `frozen_snoozed_until` à aujourd'hui + 3 mois (revient ensuite, indéfiniment). Le report est remis à zéro si `frozen_at` change (`updateItem`).
 - Quantité jamais négative (`MAX(0, …)` en SQL). 0 = badge "ÉPUISÉ".
+- **Alertes de l'accueil** (bandeau, une ligne cliquable par type, masqué si rien) : périmés, à finir bientôt, congelés depuis 3 mois → onglet Péremption ; à racheter → onglet Courses. Pastilles : Courses = stock bas, Péremption = périmés + bientôt + congelés.
+- **Rappels (notifications locales)** à `REMINDER_HOUR` (9 h) : la veille de chaque péremption (ou le jour même s'il est trop tard pour la veille), et le jour où un produit atteint 3 mois au congélateur (ou la fin de son report). Objets regroupés par heure, 60 max (limite iOS 64). Reprogrammés entièrement à chaque changement de la base (`syncReminders`, ignoré si rien n'a changé). Permission demandée depuis Réglages uniquement. `DELETE` sans `WHERE` ne déclenche pas l'écouteur SQLite (truncate optimization) : appeler `useAlerts().refresh()` après « Tout effacer » / import.
+- **Courses, remise en stock** : sur chaque ligne, − / + choisissent la quantité **achetée** (pas enregistrée, un pas de l'unité par défaut), le bouton « Ajouter » l'ajoute au stock (`ItemRow purchase` : commandes sur une ligne à part sous l'objet, via `ListRow footer`, pour laisser toute la largeur au texte ; à droite, le stock actuel « N en stock »). Un « J'ai acheté » groupé à quantité devinée (2 × minimum) a été essayé puis retiré : pas clair pour l'utilisateur.
 - **Stock bas** si `min_quantity` défini et `quantity <= min_quantity` → onglet Courses + badge. Libellé du champ côté UI : « Stock minimum ».
 - **Doublon** à la création : même nom (insensible à la casse) + même unité + même état congelé dans le même rangement → proposer "Additionner" / "Créer à part". « Additionner » (`mergeIntoItem`) ajoute la quantité, garde la date de péremption / congélation la plus proche et complète les champs vides.
 - Noms d'objets capitalisés à l'enregistrement.
+- **Sélection multiple** (rangement, Courses, Péremption ; `useSelection()` dans `components/selection.tsx`) : appui long sur un objet → mode sélection (cases à cocher, « Tout » / « Aucun » dans l'en-tête, barre d'actions en bas). Décocher le dernier, la croix, le retour Android ou quitter l'écran / l'onglet quittent le mode. Actions : « Supprimer » (confirmation listant les objets) partout ; « Ignorer (N) » sur les congelés sélectionnés (Péremption).
+- Onglets : un écran qui change son titre d'en-tête (sélection) ne doit pas changer le libellé de l'onglet → `tabBarLabel` explicite dans `(tabs)/_layout.tsx`.
 - Suppression d'une pièce ou d'un meuble = suppression en cascade, toujours précédée d'une confirmation qui annonce ce qui sera perdu.
 
 ## Autocomplétion
@@ -119,7 +129,7 @@ src/
 - Données d'écran : `useQuery(loader, key)` + `reload()` après une mutation.
 - Comparaisons/recherches texte : toujours via `normalize()` (gère les accents sans dépendre d'Intl/Hermes).
 - Recherche / autocomplétion **par début de mot uniquement** (`matchesWordStart()` dans `text.ts`) : « poul » trouve « Poulet », pas « Ampoules ». Le nom exact tapé reste proposé en tête des suggestions (pour pré-remplir unité et catégorie).
-- Android : `Alert.alert` est limité à 3 boutons.
+- **Jamais de popup native** (`Alert.alert` interdit) : dialogues maison via `showDialog({ title, message, buttons })`, `showMessage()`, `confirm()`, `showRenameDeleteMenu()` (`components.tsx`). Rendus par `<DialogHost />` (layout racine) ; un écran présenté en modal natif (fiche objet) monte son propre `<DialogHost />`, sinon rien ne s'affiche sur iOS. Styles de boutons : `primary` (Lagon), `destructive` (rouge), `default` (crème), `cancel` (discret, en bas, aussi déclenché par retour / appui hors de la carte).
 - iOS 26 : la barre de navigation native est transparente + floue par défaut (liquid glass). Choix utilisateur : en-tête **opaque** (`headerTransparent: false` + `headerStyle` dans la Stack racine). Garder quand même `contentInsetAdjustmentBehavior="automatic"` sur les ScrollView/FlatList de la Stack (sans effet avec un en-tête opaque, utile si on y revient). `EmptyState` le gère déjà.
 - Navigation : `router.push({ pathname: '/room/[id]', params: { id } })` (forme objet, compatible typed routes).
 - Pas de nouvelle dépendance sans vérifier qu'elle est dans Expo Go et l'installer via `npx expo install`.
@@ -138,4 +148,4 @@ src/
 
 - Mode sombre « soirée »
 - Photos d'objets, réordonner pièces/meubles par glisser-déposer, déplacer un meuble vers une autre pièce (`moveFurniture` existe déjà dans `queries.ts`)
-- Notifications locales avant péremption
+- Rappels : réglage de l'heure / du délai, interrupteur dans l'app (aujourd'hui : permission système)

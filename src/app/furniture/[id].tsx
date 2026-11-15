@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { FlatList, View } from 'react-native';
 
 import { ItemRow } from '@/components/item-row';
+import { confirmDeleteItems, SelectionBar, useSelection } from '@/components/selection';
 import { deleteFurniture, getFurniture, listAllFurniture, listItems, renameFurniture } from '@/db/queries';
 import { FURNITURE_SUGGESTIONS, furnitureIcon } from '@/lib/catalog';
 import { matchesItem, normalize, plural } from '@/lib/text';
@@ -38,6 +39,13 @@ export default function FurnitureScreen() {
   const q = normalize(filter);
   const visible = q ? items.filter((i) => matchesItem(i, q)) : items;
 
+  const { selected, clear, headerOptions, rowProps } = useSelection(visible.map((i) => i.id));
+  const deleteSelected = () =>
+    confirmDeleteItems(db, selected ? items.filter((i) => selected.has(i.id)) : [], () => {
+      clear();
+      reload();
+    });
+
   const addItem = () => router.push({ pathname: '/item/[id]', params: { id: 'new', furnitureId } });
 
   const menu = () =>
@@ -48,7 +56,9 @@ export default function FurnitureScreen() {
       () =>
         confirm(
           `Supprimer « ${furniture.name} » ?`,
-          items.length ? `${plural(items.length, 'objet')} seront supprimés avec lui.` : '',
+          items.length
+            ? `${plural(items.length, 'objet')} ${items.length > 1 ? 'seront supprimés' : 'sera supprimé'} avec lui.`
+            : '',
           'Supprimer',
           async () => {
             await deleteFurniture(db, furnitureId);
@@ -60,10 +70,14 @@ export default function FurnitureScreen() {
   return (
     <View style={{ flex: 1 }}>
       <Stack.Screen
-        options={{
-          title: furniture?.name ?? '',
-          headerRight: () => <IconButton icon="more" label="Options du rangement" onPress={menu} />,
-        }}
+        options={
+          headerOptions ?? {
+            title: furniture?.name ?? '',
+            headerBackVisible: true,
+            headerLeft: undefined,
+            headerRight: () => <IconButton icon="more" label="Options du rangement" onPress={menu} />,
+          }
+        }
       />
       {data && items.length === 0 ? (
         <EmptyState
@@ -75,6 +89,7 @@ export default function FurnitureScreen() {
       ) : (
         <FlatList
           data={visible}
+          extraData={selected}
           keyExtractor={(i) => String(i.id)}
           contentInsetAdjustmentBehavior="automatic"
           ItemSeparatorComponent={Separator}
@@ -92,12 +107,22 @@ export default function FurnitureScreen() {
               </View>
             ) : undefined
           }
-          renderItem={({ item }) => (
-            <ItemRow item={item} onChanged={reload} />
-          )}
+          renderItem={({ item }) => <ItemRow item={item} onChanged={reload} {...rowProps(item.id)} />}
         />
       )}
-      {items.length > 0 && <Fab label="Ajouter un objet" onPress={addItem} />}
+      {selected ? (
+        <SelectionBar>
+          <Button
+            title={`Supprimer (${selected.size})`}
+            icon="trash"
+            variant="danger"
+            onPress={deleteSelected}
+            style={{ flex: 1 }}
+          />
+        </SelectionBar>
+      ) : (
+        items.length > 0 && <Fab label="Ajouter un objet" onPress={addItem} />
+      )}
       <PromptModal
         visible={renaming}
         title="Renommer le rangement"

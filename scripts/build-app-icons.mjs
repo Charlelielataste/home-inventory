@@ -58,9 +58,9 @@ function centered(fill, { background, filter } = {}) {
   const dx = 512 - (box.x + box.w / 2) * scale;
   const dy = 512 - (box.y + box.h / 2) * scale;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
-  <defs><filter id="mono" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  -1.8 -3.54 -0.66 6 -3"/></filter></defs>
+  <defs><filter id="mono" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  -1.8 -3.54 -0.66 6 -3"/></filter><filter id="silhouette"><feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0"/></filter></defs>
   ${background ? `<rect width="1024" height="1024" fill="${background}"/>` : ''}
-  <image href="${dataUri(transparent)}" x="${dx}" y="${dy}" width="${1024 * scale}" height="${1024 * scale}" ${filter ? 'filter="url(#mono)"' : ''}/>
+  <image href="${dataUri(transparent)}" x="${dx}" y="${dy}" width="${1024 * scale}" height="${1024 * scale}" ${filter ? `filter="url(#${filter === true ? 'mono' : filter})"` : ''}/>
 </svg>`;
 }
 
@@ -80,3 +80,6 @@ write('assets/images/android-icon-monochrome.png', centered(0.56, { filter: true
 
 // Splash: Android 12+ crops the splash image to a circle (2/3 of its size)
 write('assets/images/splash-icon.png', centered(0.56), 1024);
+
+// Android notification small icon: white silhouette on transparent (the system only uses alpha)
+write('assets/images/notification-icon.png', centered(0.9, { filter: 'silhouette' }), 96);

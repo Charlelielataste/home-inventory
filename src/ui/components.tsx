@@ -1,8 +1,8 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,19 +17,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { filterByQuery } from '@/lib/text';
 
 import { Icon, type IconName } from './icon';
-import { card, colors, font, fonts, radius, spacing, tintFor, type Tone, tones } from './theme';
+import { card, colors, depth, font, fonts, radius, spacing, sunk, tintFor, type Tone, tones } from './theme';
 
 export { Icon, type IconName };
-
-/** Pressed state of "3D" elements: they sink into their bottom edge. */
-const sunk = (edge: number) => ({ transform: [{ translateY: edge - 1 }], borderBottomWidth: 1 });
 
 // ---------- Buttons ----------
 
 type ButtonProps = {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'ghost';
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   icon?: IconName;
   disabled?: boolean;
   style?: ViewStyle;
@@ -37,7 +34,8 @@ type ButtonProps = {
 
 export function Button({ title, onPress, variant = 'primary', icon, disabled, style }: ButtonProps) {
   const primary = variant === 'primary';
-  const fg = primary ? colors.onPrimary : colors.text;
+  const danger = variant === 'danger';
+  const fg = primary || danger ? colors.onPrimary : colors.text;
   return (
     <Pressable
       onPress={onPress}
@@ -45,13 +43,23 @@ export function Button({ title, onPress, variant = 'primary', icon, disabled, st
       style={({ pressed }) => [
         styles.button,
         primary && styles.buttonPrimary,
+        danger && styles.buttonDanger,
         variant === 'secondary' && styles.buttonSecondary,
-        pressed && variant !== 'ghost' && sunk(4),
+        pressed &&
+          variant !== 'ghost' &&
+          sunk(4, primary ? colors.primaryDark : danger ? colors.dangerDark : colors.edge),
         pressed && variant === 'ghost' && { opacity: 0.6 },
         disabled && { opacity: 0.45 },
         style,
       ]}>
-      {icon && <Icon name={icon} size={20} color={fg} duo={primary ? colors.primaryDark : colors.duo} />}
+      {icon && (
+        <Icon
+          name={icon}
+          size={20}
+          color={fg}
+          duo={primary ? colors.primaryDark : danger ? colors.dangerDark : colors.duo}
+        />
+      )}
       <Text style={[styles.buttonText, { color: fg }]}>{title}</Text>
     </Pressable>
   );
@@ -63,11 +71,14 @@ export function IconButton({
   size = 22,
   label,
   variant = 'plain',
+  color,
 }: {
   icon: IconName;
   onPress: () => void;
   size?: number;
   label: string;
+  /** Glyph color (defaults to the variant's) */
+  color?: string;
   /** plain: no background · soft: small cream key · filled: lagoon key */
   variant?: 'plain' | 'soft' | 'filled';
 }) {
@@ -81,9 +92,10 @@ export function IconButton({
         styles.iconButton,
         variant === 'soft' && styles.iconButtonSoft,
         filled && styles.iconButtonFilled,
-        pressed && (variant === 'plain' ? { opacity: 0.5 } : sunk(3)),
+        pressed &&
+          (variant === 'plain' ? { opacity: 0.5 } : filled ? sunk(4, colors.primaryDark) : sunk(3, colors.edge)),
       ]}>
-      <Icon name={icon} size={size} color={filled ? colors.onPrimary : colors.text} />
+      <Icon name={icon} size={size} color={color ?? (filled ? colors.onPrimary : colors.text)} />
     </Pressable>
   );
 }
@@ -98,7 +110,7 @@ export function Fab({ onPress, label, inTabs }: { onPress: () => void; label: st
       style={({ pressed }) => [
         styles.fab,
         { bottom: (inTabs ? 0 : insets.bottom) + spacing.lg },
-        pressed && sunk(5),
+        pressed && sunk(5, colors.primaryDark),
       ]}>
       <Icon name="add" size={28} color={colors.onPrimary} />
     </Pressable>
@@ -152,19 +164,37 @@ export function Chip({
   );
 }
 
-export function Checkbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+export function Checkbox({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <Pressable
       onPress={() => onChange(!checked)}
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
       hitSlop={8}
-      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }, pressed && { opacity: 0.6 }]}>
-      <View style={[styles.checkbox, checked && styles.checkboxOn]}>
-        {checked && <Icon name="check" size={16} color={colors.onPrimary} />}
-      </View>
+      style={({ pressed }) => [
+        { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+        pressed && { opacity: 0.6 },
+      ]}>
+      <CheckMark checked={checked} />
       <Text style={font.body}>{label}</Text>
     </Pressable>
+  );
+}
+
+/** The checkbox square alone (e.g. selection mode of a list). */
+export function CheckMark({ checked }: { checked: boolean }) {
+  return (
+    <View style={[styles.checkbox, checked && styles.checkboxOn]}>
+      {checked && <Icon name="check" size={16} color={colors.onPrimary} />}
+    </View>
   );
 }
 
@@ -214,6 +244,10 @@ type ListRowProps = {
   chevron?: boolean;
   /** Horizontal margin of the card (false when the parent already pads) */
   inset?: boolean;
+  /** Highlighted (selection mode) */
+  selected?: boolean;
+  /** Full-width content under the row, inside the card (e.g. shopping controls) */
+  footer?: ReactNode;
 };
 
 export function ListRow({
@@ -227,33 +261,44 @@ export function ListRow({
   onLongPress,
   chevron,
   inset = true,
+  selected,
+  footer,
 }: ListRowProps) {
   return (
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
       disabled={!onPress && !onLongPress}
-      style={({ pressed }) => [styles.row, inset && { marginHorizontal: spacing.lg }, pressed && sunk(3)]}>
-      {icon && <IconTile icon={icon} tintKey={tintKey} />}
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={font.bodyStrong} numberOfLines={1}>
-          {title}
-        </Text>
-        {!!subtitle && (
-          <Text style={[font.small, { color: colors.textMuted }]} numberOfLines={1}>
-            {subtitle}
+      accessibilityState={selected === undefined ? undefined : { selected }}
+      style={({ pressed }) => [
+        styles.row,
+        inset && { marginHorizontal: spacing.lg },
+        selected && styles.rowSelected,
+        pressed && sunk(3, selected ? colors.selectedEdge : colors.edge),
+      ]}>
+      <View style={styles.rowMain}>
+        {icon && <IconTile icon={icon} tintKey={tintKey} />}
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={font.bodyStrong} numberOfLines={1}>
+            {title}
           </Text>
-        )}
-        {!!badges?.length && (
-          <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: 2, flexWrap: 'wrap' }}>
-            {badges.map((b) => (
-              <Badge key={b.label} label={b.label} tone={b.tone} />
-            ))}
-          </View>
-        )}
+          {!!subtitle && (
+            <Text style={[font.small, { color: colors.textMuted }]} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          )}
+          {!!badges?.length && (
+            <View style={{ flexDirection: 'row', gap: spacing.xs, marginTop: 2, flexWrap: 'wrap' }}>
+              {badges.map((b) => (
+                <Badge key={b.label} label={b.label} tone={b.tone} />
+              ))}
+            </View>
+          )}
+        </View>
+        {right}
+        {chevron && <Icon name="chevron-forward" size={16} color={colors.textMuted} />}
       </View>
-      {right}
-      {chevron && <Icon name="chevron-forward" size={16} color={colors.textMuted} />}
+      {footer && <View style={styles.rowFooter}>{footer}</View>}
     </Pressable>
   );
 }
@@ -276,7 +321,7 @@ export function Tile({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      style={({ pressed }) => [styles.tile, pressed && sunk(3)]}>
+      style={({ pressed }) => [styles.tile, pressed && sunk(3, colors.edge)]}>
       <IconTile icon={icon} size={56} tintKey={title} />
       <View style={{ gap: 2 }}>
         <Text style={[font.heading, { fontSize: 17 }]} numberOfLines={1}>
@@ -300,9 +345,13 @@ export function Badge({ label, tone = 'neutral' }: { label: string; tone?: Tone 
   );
 }
 
-export function SectionTitle({ children, right }: { children: string; right?: ReactNode }) {
+/**
+ * Transparent by default: an opaque title would hide the thickness (shadow) of the
+ * element above it. `sticky`: opaque, for sticky section list headers.
+ */
+export function SectionTitle({ children, right, sticky }: { children: string; right?: ReactNode; sticky?: boolean }) {
   return (
-    <View style={styles.sectionTitle}>
+    <View style={[styles.sectionTitle, sticky && { backgroundColor: colors.background }]}>
       <Text style={font.label}>{children}</Text>
       {right}
     </View>
@@ -471,21 +520,125 @@ export function PromptModal({
 }
 
 // ---------- Dialogs ----------
+// Themed replacement for the native Alert.alert (never use it in the app):
+// showDialog() from anywhere, rendered by the single <DialogHost /> of the root layout.
 
-export function confirm(title: string, message: string, confirmLabel: string, onConfirm: () => void) {
-  Alert.alert(title, message, [
-    { text: 'Annuler', style: 'cancel' },
-    { text: confirmLabel, style: 'destructive', onPress: onConfirm },
-  ]);
+export type DialogButton = {
+  text: string;
+  /** cancel: ghost, at the bottom, also used by the back button / backdrop · destructive: red · primary: lagoon · default: cream */
+  style?: 'default' | 'primary' | 'cancel' | 'destructive';
+  onPress?: () => void;
+};
+export type DialogSpec = { title: string; message?: string; buttons?: DialogButton[] };
+
+/** Mounted hosts, the last one shows the dialogs (see DialogHost). */
+const dialogHosts: ((spec: DialogSpec) => void)[] = [];
+
+export function showDialog(spec: DialogSpec) {
+  const host = dialogHosts[dialogHosts.length - 1];
+  if (!host) console.warn('[dialog] <DialogHost /> is not mounted');
+  host?.(spec);
 }
 
-/** "Rename / Delete" menu (Android limits alerts to 3 buttons). */
+/** Information message with a single "OK". */
+export function showMessage(title: string, message?: string) {
+  showDialog({ title, message });
+}
+
+export function confirm(title: string, message: string, confirmLabel: string, onConfirm: () => void) {
+  showDialog({
+    title,
+    message,
+    buttons: [
+      { text: confirmLabel, style: 'destructive', onPress: onConfirm },
+      { text: 'Annuler', style: 'cancel' },
+    ],
+  });
+}
+
+/** "Rename / Delete" menu. */
 export function showRenameDeleteMenu(name: string, onRename: () => void, onDelete: () => void) {
-  Alert.alert(name, undefined, [
-    { text: 'Annuler', style: 'cancel' },
-    { text: 'Supprimer', style: 'destructive', onPress: onDelete },
-    { text: 'Renommer', onPress: onRename },
-  ]);
+  showDialog({
+    title: name,
+    buttons: [
+      { text: 'Renommer', onPress: onRename },
+      { text: 'Supprimer', style: 'destructive', onPress: onDelete },
+      { text: 'Annuler', style: 'cancel' },
+    ],
+  });
+}
+
+const DIALOG_VARIANTS = { default: 'secondary', primary: 'primary', destructive: 'danger', cancel: 'ghost' } as const;
+
+/**
+ * Renders the dialogs. One in the root layout; screens presented as a native modal
+ * (item form) mount their own, because on iOS a root <Modal> cannot appear above them.
+ */
+export function DialogHost() {
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
+  // iOS cannot present a modal while another one is closing: run the action once closed
+  const pending = useRef<(() => void) | null>(null);
+  // False once a button was pressed: a fast double tap must not run the action twice
+  const open = useRef(false);
+  useEffect(() => {
+    const show = (spec: DialogSpec) => {
+      open.current = true;
+      setDialog(spec);
+    };
+    dialogHosts.push(show);
+    return () => {
+      dialogHosts.splice(dialogHosts.lastIndexOf(show), 1);
+    };
+  }, []);
+
+  const buttons: DialogButton[] = dialog?.buttons?.length ? dialog.buttons : [{ text: 'OK', style: 'primary' }];
+  // Cancel last, whatever the order given
+  const sorted = [...buttons.filter((b) => b.style !== 'cancel'), ...buttons.filter((b) => b.style === 'cancel')];
+  const press = (button?: DialogButton) => {
+    if (!open.current) return;
+    open.current = false;
+    // Close first: the action may open another dialog or modal
+    setDialog(null);
+    if (!button?.onPress) return;
+    if (Platform.OS === 'ios') pending.current = button.onPress;
+    else button.onPress();
+  };
+  const onDismiss = () => {
+    const action = pending.current;
+    pending.current = null;
+    action?.();
+  };
+  const dismiss = () => press(buttons.find((b) => b.style === 'cancel'));
+
+  return (
+    <Modal
+      visible={!!dialog}
+      transparent
+      animationType="fade"
+      onRequestClose={dismiss}
+      onDismiss={onDismiss}
+      statusBarTranslucent>
+      <View style={styles.modalBackdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={dismiss} accessibilityLabel="Fermer" />
+        {dialog && (
+          <View style={styles.modalCard} accessibilityViewIsModal>
+            <Text style={font.title}>{dialog.title}</Text>
+            {!!dialog.message && <Text style={[font.body, { color: colors.textMuted }]}>{dialog.message}</Text>}
+            <View style={{ gap: spacing.sm, marginTop: spacing.xs }}>
+              {sorted.map((b) => (
+                <Button
+                  key={b.text}
+                  title={b.text}
+                  variant={DIALOG_VARIANTS[b.style ?? 'default']}
+                  onPress={() => press(b)}
+                />
+              ))}
+            </View>
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
 }
 
 // ---------- Styles ----------
@@ -501,8 +654,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     minHeight: 50,
   },
-  buttonPrimary: { backgroundColor: colors.primary, borderBottomWidth: 4, borderBottomColor: colors.primaryDark },
-  buttonSecondary: { backgroundColor: colors.surface, borderBottomWidth: 4, borderBottomColor: colors.edge },
+  buttonPrimary: { backgroundColor: colors.primary, ...depth(4, colors.primaryDark) },
+  buttonSecondary: { backgroundColor: colors.surface, ...depth(4, colors.edge) },
+  buttonDanger: { backgroundColor: colors.danger, ...depth(4, colors.dangerDark) },
   buttonText: { fontFamily: fonts.semibold, fontSize: 16 },
   iconButton: {
     width: 40,
@@ -516,15 +670,13 @@ const styles = StyleSheet.create({
     height: 34,
     borderRadius: radius.sm + 2,
     backgroundColor: colors.background,
-    borderBottomWidth: 3,
-    borderBottomColor: colors.edge,
+    ...depth(3, colors.edge),
   },
   iconButtonFilled: {
     width: 48,
     height: 48,
     backgroundColor: colors.primary,
-    borderBottomWidth: 4,
-    borderBottomColor: colors.primaryDark,
+    ...depth(4, colors.primaryDark),
   },
   fab: {
     position: 'absolute',
@@ -533,8 +685,7 @@ const styles = StyleSheet.create({
     height: 62,
     borderRadius: 22,
     backgroundColor: colors.primary,
-    borderBottomWidth: 5,
-    borderBottomColor: colors.primaryDark,
+    ...depth(5, colors.primaryDark),
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -573,14 +724,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkboxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  rowSelected: { backgroundColor: colors.selected, ...depth(3, colors.selectedEdge) },
   row: {
     ...card,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
     minHeight: 64,
+  },
+  rowMain: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  rowFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm + 2,
+    paddingTop: spacing.sm + 2,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
   },
   tile: {
     ...card,
@@ -601,7 +761,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg + 4,
     paddingTop: spacing.xl,
     paddingBottom: spacing.sm,
-    backgroundColor: colors.background,
   },
   empty: { alignItems: 'center', gap: spacing.md, padding: spacing.xl, paddingTop: 64 },
   emptyBubble: {
@@ -609,8 +768,6 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
     backgroundColor: colors.surface,
-    borderBottomWidth: 4,
-    borderBottomColor: colors.edge,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.sm,

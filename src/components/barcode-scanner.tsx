@@ -51,16 +51,16 @@ export function BarcodeScanner({ visible, onScanned, onClose }: Props) {
           </View>
         )}
 
-        <View style={[styles.frame, { pointerEvents: 'none' }]} />
+        {permission?.granted && (
+          <>
+            <View style={[styles.frame, { pointerEvents: 'none' }]} />
+            <Text style={[styles.hint, { bottom: insets.bottom + 40 }]}>Vise le code-barres du produit</Text>
+          </>
+        )}
 
-        <View style={[styles.top, { paddingTop: insets.top + spacing.sm }]}>
-          <View style={{ backgroundColor: colors.overlay, borderRadius: 999 }}>
-            <IconButton icon="close" label="Fermer" onPress={onClose} />
-          </View>
+        <View style={[styles.close, { top: insets.top + spacing.sm }]}>
+          <IconButton icon="close" label="Fermer" size={24} color={colors.overlay} onPress={onClose} />
         </View>
-        <Text style={[styles.hint, { bottom: insets.bottom + 40 }]}>
-          Vise le code-barres du produit
-        </Text>
       </View>
     </Modal>
   );
@@ -78,6 +78,16 @@ const styles = StyleSheet.create({
     borderColor: colors.overlay,
     borderRadius: 12,
   },
-  top: { position: 'absolute', left: spacing.lg, right: spacing.lg },
+  // Dark round behind the white cross: stays visible over a bright camera image
+  close: {
+    position: 'absolute',
+    right: spacing.lg,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.backdrop,
+  },
   hint: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: colors.overlay, fontFamily: fonts.medium, fontSize: 16 },
 });

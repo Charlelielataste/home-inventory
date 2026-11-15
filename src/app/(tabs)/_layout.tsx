@@ -1,9 +1,29 @@
+import * as Notifications from 'expo-notifications';
+import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
+import { useEffect } from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { alertCounts, useAlerts } from '@/lib/alerts';
+import { REMINDER_ROUTE } from '@/lib/reminders';
 import { Icon, type IconName } from '@/ui/icon';
 import { colors, fonts } from '@/ui/theme';
+
+/** Last reminder tap handled (the hook returns the same response again on remount). */
+let handledResponseId: string | null = null;
+
+/** Tapping a reminder notification opens the Péremption tab. */
+function useReminderTaps() {
+  const response = Notifications.useLastNotificationResponse();
+  useEffect(() => {
+    if (!response || response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
+    const id = response.notification.request.identifier;
+    if (id === handledResponseId) return;
+    handledResponseId = id;
+    if (response.notification.request.content.data?.url === REMINDER_ROUTE) router.navigate(REMINDER_ROUTE);
+  }, [response]);
+}
 
 /** Colored illustration, dimmed when inactive, on a soft pill when active. */
 function TabIcon({ name, focused }: { name: IconName; focused: boolean }) {
@@ -22,13 +42,18 @@ function TabIcon({ name, focused }: { name: IconName; focused: boolean }) {
   );
 }
 
-const tab = (title: string, icon: IconName) => ({
+const tab = (title: string, icon: IconName, badge = 0) => ({
   title,
+  // Explicit: a screen may change its header title (selection mode), not the tab label
+  tabBarLabel: title,
+  tabBarBadge: badge > 0 ? (badge > 99 ? '99+' : badge) : undefined,
   tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name={icon} focused={focused} />,
 });
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
+  const counts = alertCounts(useAlerts().alerts);
+  useReminderTaps();
   return (
     <Tabs
       screenOptions={{
@@ -45,6 +70,12 @@ export default function TabsLayout() {
           paddingBottom: insets.bottom + 6,
         },
         tabBarItemStyle: { gap: 2 },
+        tabBarBadgeStyle: {
+          backgroundColor: colors.badge,
+          color: colors.onBadge,
+          fontFamily: fonts.semibold,
+          fontSize: 11,
+        },
         headerStyle: { backgroundColor: colors.background },
         headerTitleStyle: { fontFamily: fonts.bold, fontSize: 26, color: colors.text },
         headerShadowVisible: false,
@@ -52,8 +83,8 @@ export default function TabsLayout() {
       }}>
       <Tabs.Screen name="index" options={tab('Chez moi', 'home')} />
       <Tabs.Screen name="search" options={tab('Rechercher', 'search')} />
-      <Tabs.Screen name="shopping" options={tab('Courses', 'cart')} />
-      <Tabs.Screen name="alerts" options={tab('Péremption', 'hourglass')} />
+      <Tabs.Screen name="shopping" options={tab('Courses', 'cart', counts.toBuy)} />
+      <Tabs.Screen name="alerts" options={tab('Péremption', 'hourglass', counts.expiry)} />
       <Tabs.Screen name="settings" options={tab('Réglages', 'settings')} />
     </Tabs>
   );

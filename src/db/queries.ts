@@ -254,17 +254,25 @@ export function adjustQuantity(db: SQLiteDatabase, id: number, delta: number) {
   );
 }
 
+const placeholders = (ids: unknown[]) => ids.map(() => '?').join(', ');
+
 /** Snoozes ("Ignorer") the freezer reminder for FREEZER_WARNING_MONTHS months. */
-export function snoozeFrozen(db: SQLiteDatabase, id: number) {
+export function snoozeFrozen(db: SQLiteDatabase, ids: number[]) {
+  if (ids.length === 0) return Promise.resolve();
   return db.runAsync(
-    'UPDATE items SET frozen_snoozed_until = ? WHERE id = ?',
+    `UPDATE items SET frozen_snoozed_until = ? WHERE id IN (${placeholders(ids)})`,
     addToToday({ months: FREEZER_WARNING_MONTHS }),
-    id,
+    ...ids,
   );
 }
 
 export function deleteItem(db: SQLiteDatabase, id: number) {
   return db.runAsync('DELETE FROM items WHERE id = ?', id);
+}
+
+export function deleteItems(db: SQLiteDatabase, ids: number[]) {
+  if (ids.length === 0) return Promise.resolve();
+  return db.runAsync(`DELETE FROM items WHERE id IN (${placeholders(ids)})`, ids);
 }
 
 // ---------- Alerts ----------
@@ -297,6 +305,20 @@ export async function getAlerts(db: SQLiteDatabase) {
     ),
   ]);
   return { lowStock, expired, expiringSoon, frozenLong };
+}
+
+export type Alerts = Awaited<ReturnType<typeof getAlerts>>;
+
+export type ReminderItem = Pick<Item, 'name' | 'expires_at' | 'frozen_at' | 'frozen_snoozed_until'>;
+
+/** Items that may need a future reminder: not yet expired (not frozen), or frozen. */
+export function listReminderItems(db: SQLiteDatabase) {
+  return db.getAllAsync<ReminderItem>(
+    `SELECT name, expires_at, frozen_at, frozen_snoozed_until FROM items
+     WHERE (frozen_at IS NULL AND expires_at >= ?) OR frozen_at IS NOT NULL
+     ORDER BY name COLLATE NOCASE`,
+    todayIso(),
+  );
 }
 
 // ---------- Known products (autocomplete) ----------

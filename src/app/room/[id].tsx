@@ -77,7 +77,7 @@ export default function RoomScreen() {
       () =>
         confirm(
           `Supprimer « ${f.name} » ?`,
-          f.item_count ? `${plural(f.item_count, 'objet')} seront supprimés avec lui.` : '',
+          f.item_count ? `${plural(f.item_count, 'objet')} ${f.item_count > 1 ? 'seront supprimés' : 'sera supprimé'} avec lui.` : '',
           'Supprimer',
           async () => {
             await deleteFurniture(db, f.id);

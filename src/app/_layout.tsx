@@ -12,6 +12,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 
 import { migrate } from '@/db/schema';
+import { AlertsProvider } from '@/lib/alerts';
+import { DialogHost } from '@/ui/components';
 import { colors, fonts } from '@/ui/theme';
 
 SplashScreen.preventAutoHideAsync();
@@ -44,26 +46,29 @@ export default function RootLayout() {
   if (!ready) return null;
 
   return (
-    <SQLiteProvider databaseName="inventaire.db" onInit={migrate}>
-      <ThemeProvider value={theme}>
-        <StatusBar style="dark" />
-        <Stack
-          screenOptions={{
-            headerTintColor: colors.text,
-            headerTitleStyle: { fontFamily: fonts.bold, fontSize: 20 },
-            headerShadowVisible: false,
-            // Opaque header everywhere (iOS 26 makes it transparent + blurred by default)
-            headerTransparent: false,
-            headerStyle: { backgroundColor: colors.background },
-            headerBackButtonDisplayMode: 'minimal',
-            contentStyle: { backgroundColor: colors.background },
-          }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="room/[id]" options={{ title: '' }} />
-          <Stack.Screen name="furniture/[id]" options={{ title: '' }} />
-          <Stack.Screen name="item/[id]" options={{ presentation: 'modal', title: '' }} />
-        </Stack>
-      </ThemeProvider>
+    <SQLiteProvider databaseName="inventaire.db" onInit={migrate} options={{ enableChangeListener: true }}>
+      <AlertsProvider>
+        <ThemeProvider value={theme}>
+          <StatusBar style="dark" />
+          <Stack
+            screenOptions={{
+              headerTintColor: colors.text,
+              headerTitleStyle: { fontFamily: fonts.bold, fontSize: 20 },
+              headerShadowVisible: false,
+              // Opaque header everywhere (iOS 26 makes it transparent + blurred by default)
+              headerTransparent: false,
+              headerStyle: { backgroundColor: colors.background },
+              headerBackButtonDisplayMode: 'minimal',
+              contentStyle: { backgroundColor: colors.background },
+            }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="room/[id]" options={{ title: '' }} />
+            <Stack.Screen name="furniture/[id]" options={{ title: '' }} />
+            <Stack.Screen name="item/[id]" options={{ presentation: 'modal', title: '' }} />
+          </Stack>
+          <DialogHost />
+        </ThemeProvider>
+      </AlertsProvider>
     </SQLiteProvider>
   );
 }

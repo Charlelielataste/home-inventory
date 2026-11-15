@@ -33,6 +33,8 @@ const ICONS = {
   location: 'ph:map-pin-duotone',
   history: 'ph:clock-counter-clockwise-duotone',
   eraser: 'ph:eraser-duotone',
+  bell: 'ph:bell-ringing-duotone',
+  'cart-add': 'ph:shopping-cart-simple-bold',
 
   // ---- Tabs & illustrations (Fluent) ----
   home: 'fl:house',

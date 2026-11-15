@@ -10,6 +10,8 @@ export const colors = {
   textMuted: '#A38A70',
   /** Bottom "thickness" of cards and buttons (pressable 3D look) */
   edge: '#E6D9B6',
+  /** Soft diffuse shadow under raised elements */
+  shadow: 'rgba(94, 69, 50, 0.10)',
   line: '#EADFC4',
   primary: '#2E4A5E', // lagoon
   primaryDark: '#1D3242',
@@ -18,6 +20,15 @@ export const colors = {
   duo: '#C9E1EE',
   /** Highlight behind the active tab */
   tabActive: '#DCEBF3',
+  /** Destructive action (delete several items) */
+  danger: '#C4513C',
+  dangerDark: '#9A3B2A',
+  /** Selected list row (selection mode) */
+  selected: '#DCEBF3',
+  selectedEdge: '#B9D5E4',
+  /** Count bubble on tabs (alerts) */
+  badge: '#D9604A', // terracotta
+  onBadge: '#FFFBEE',
   disabled: '#CFC3A8',
   backdrop: 'rgba(60, 42, 28, 0.45)',
   /** Camera overlay (barcode scanner) */
@@ -75,10 +86,28 @@ export const font = {
   },
 };
 
-/** Soft card: surface + a thicker bottom edge. */
+/**
+ * "Thickness" under pressable elements: a solid offset shadow + a soft diffuse one.
+ * A shadow follows the rounded shape with an even thickness (a bottom border tapers
+ * into a crescent on rounded corners).
+ */
+export function depth(height: number, color: string) {
+  return {
+    boxShadow: [
+      { offsetX: 0, offsetY: height, blurRadius: 0, color },
+      { offsetX: 0, offsetY: height + 2, blurRadius: 6, color: colors.shadow },
+    ],
+  };
+}
+
+/** Pressed state of raised elements: they sink into their thickness. */
+export function sunk(height: number, color: string) {
+  return { transform: [{ translateY: height - 1 }], ...depth(1, color) };
+}
+
+/** Soft card: surface + a thin bottom thickness. */
 export const card = {
   backgroundColor: colors.surface,
   borderRadius: radius.lg,
-  borderBottomWidth: 3,
-  borderBottomColor: colors.edge,
+  ...depth(3, colors.edge),
 };

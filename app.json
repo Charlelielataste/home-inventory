@@ -45,6 +45,13 @@
           "cameraPermission": "L’appareil photo sert à scanner les codes-barres de tes produits.",
           "recordAudioAndroid": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#2E4A5E"
+        }
       ]
     ],
     "experiments": {

@@ -1,20 +1,41 @@
-import { Alert, ScrollView, Text, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import type { PermissionResponse } from 'expo-notifications';
+import { useCallback, useState } from 'react';
+import { Linking, ScrollView, Text, View } from 'react-native';
 
 import { forgetKnownProducts, getStats, wipeAll } from '@/db/queries';
 import { exportBackup, pickBackup, restoreBackup } from '@/lib/backup';
-import { isoToFr } from '@/lib/dates';
+import { useAlerts } from '@/lib/alerts';
+import { FREEZER_WARNING_MONTHS, isoToFr, REMINDER_HOUR } from '@/lib/dates';
+import { getReminderPermission, requestReminderPermission } from '@/lib/reminders';
+import { plural } from '@/lib/text';
 import { useQuery } from '@/lib/use-query';
-import { Button, confirm, Icon, type IconName, SectionTitle } from '@/ui/components';
+import { Button, confirm, Icon, type IconName, SectionTitle, showMessage } from '@/ui/components';
 import { card, colors, font, spacing } from '@/ui/theme';
 
 export default function SettingsScreen() {
   const { data: stats, reload, db } = useQuery(getStats);
+  const { refresh: refreshAlerts } = useAlerts();
+
+  // Notification permission, re-read on focus (it can be changed in the system settings)
+  const [permission, setPermission] = useState<PermissionResponse>();
+  useFocusEffect(
+    useCallback(() => {
+      getReminderPermission().then(setPermission, () => {});
+    }, []),
+  );
+
+  const onEnableReminders = async () => {
+    const res = await requestReminderPermission();
+    setPermission(res);
+    if (res.granted) refreshAlerts();
+  };
 
   const onExport = async () => {
     try {
       await exportBackup(db);
     } catch (e) {
-      Alert.alert('Export impossible', e instanceof Error ? e.message : String(e));
+      showMessage('Export impossible', e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -24,16 +45,17 @@ export default function SettingsScreen() {
       if (!backup) return;
       confirm(
         'Remplacer les données ?',
-        `La sauvegarde du ${isoToFr(backup.exported_at.slice(0, 10))} contient ${backup.items.length} objets. Toutes les données actuelles seront remplacées.`,
+        `La sauvegarde du ${isoToFr(backup.exported_at.slice(0, 10))} contient ${plural(backup.items.length, 'objet')}. Toutes les données actuelles seront remplacées.`,
         'Remplacer',
         async () => {
           const res = await restoreBackup(db, backup);
           reload();
-          Alert.alert('Import terminé', `${res.rooms} pièces, ${res.furniture} rangements, ${res.items} objets.`);
+          refreshAlerts();
+          showMessage('Import terminé', `${res.rooms} pièces, ${res.furniture} rangements, ${res.items} objets.`);
         },
       );
     } catch (e) {
-      Alert.alert('Import impossible', e instanceof Error ? e.message : String(e));
+      showMessage('Import impossible', e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -42,6 +64,7 @@ export default function SettingsScreen() {
       confirm('Vraiment ?', 'Pense à exporter une sauvegarde avant. Cette action est irréversible.', 'Tout effacer', async () => {
         await wipeAll(db);
         reload();
+        refreshAlerts();
       }),
     );
 
@@ -63,6 +86,25 @@ export default function SettingsScreen() {
         <Stat icon="home" value={stats?.rooms} label="pièces" />
         <Stat icon="file-box" value={stats?.furniture} label="rangements" />
         <Stat icon="box" value={stats?.items} label="objets" />
+      </View>
+
+      <SectionTitle>Rappels</SectionTitle>
+      <View style={{ paddingHorizontal: spacing.lg, gap: spacing.sm }}>
+        <Text style={[font.small, { color: colors.textMuted }]}>
+          {`Une notification à ${REMINDER_HOUR} h la veille de chaque date de péremption, et quand un produit est au congélateur depuis ${FREEZER_WARNING_MONTHS} mois.`}
+          {permission?.granted ? ' Activés sur ce téléphone.' : ''}
+        </Text>
+        {permission && !permission.granted && permission.canAskAgain && (
+          <Button title="Activer les rappels" icon="bell" onPress={onEnableReminders} />
+        )}
+        {permission && (permission.granted || !permission.canAskAgain) && (
+          <Button
+            title={permission.granted ? 'Gérer les notifications' : 'Autoriser dans les réglages'}
+            icon="bell"
+            variant="secondary"
+            onPress={() => Linking.openSettings()}
+          />
+        )}
       </View>
 
       <SectionTitle>Sauvegarde</SectionTitle>

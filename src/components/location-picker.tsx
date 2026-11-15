@@ -1,4 +1,4 @@
-import { Modal, SectionList, Text, View } from 'react-native';
+import { Modal, Platform, SectionList, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { FurnitureWithRoom } from '@/db/queries';
@@ -17,6 +17,9 @@ type Props = {
 /** Picks an item's furniture (also used to move it). */
 export function LocationPicker({ visible, furniture, selectedId, onSelect, onClose }: Props) {
   const insets = useSafeAreaInsets();
+  // Android ignores pageSheet: the modal is full screen, edge to edge, under the status bar.
+  // On iOS the sheet already starts below it.
+  const topInset = Platform.OS === 'android' ? insets.top : 0;
 
   const sections: { title: string; data: FurnitureWithRoom[] }[] = [];
   for (const f of furniture) {
@@ -27,7 +30,7 @@ export function LocationPicker({ visible, furniture, selectedId, onSelect, onClo
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet">
-      <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: spacing.md }}>
+      <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: topInset + spacing.md }}>
         <View
           style={{
             flexDirection: 'row',
@@ -44,7 +47,7 @@ export function LocationPicker({ visible, furniture, selectedId, onSelect, onClo
           stickySectionHeadersEnabled
           ItemSeparatorComponent={Separator}
           contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }}
-          renderSectionHeader={({ section }) => <SectionTitle>{section.title}</SectionTitle>}
+          renderSectionHeader={({ section }) => <SectionTitle sticky>{section.title}</SectionTitle>}
           renderItem={({ item }) => (
             <ListRow
               title={item.name}

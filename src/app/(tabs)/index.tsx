@@ -1,17 +1,18 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 
 import {
   createRoom,
   createRooms,
   deleteRoom,
-  getAlerts,
   listRooms,
   renameRoom,
   type RoomWithCounts,
 } from '@/db/queries';
+import { alertCounts, useAlerts } from '@/lib/alerts';
 import { DEFAULT_ROOMS, ROOM_SUGGESTIONS, roomIcon } from '@/lib/catalog';
+import { FREEZER_WARNING_MONTHS } from '@/lib/dates';
 import { plural } from '@/lib/text';
 import { useQuery } from '@/lib/use-query';
 import {
@@ -20,18 +21,16 @@ import {
   EmptyState,
   Fab,
   Icon,
+  type IconName,
   PromptModal,
   showRenameDeleteMenu,
   Tile,
 } from '@/ui/components';
-import { colors, font, radius, spacing } from '@/ui/theme';
+import { colors, depth, font, radius, spacing } from '@/ui/theme';
 
 export default function HomeScreen() {
-  const { data, reload, db } = useQuery(async (db) => ({
-    rooms: await listRooms(db),
-    alerts: await getAlerts(db),
-  }));
-  const rooms = data?.rooms;
+  const { data: rooms, reload, db } = useQuery(listRooms);
+  const { alerts } = useAlerts();
   const [modal, setModal] = useState<{ mode: 'create' } | { mode: 'rename'; room: RoomWithCounts } | null>(null);
 
   const [creatingDefaults, setCreatingDefaults] = useState(false);
@@ -58,7 +57,9 @@ export default function HomeScreen() {
         confirm(
           `Supprimer « ${room.name} » ?`,
           room.furniture_count
-            ? `${plural(room.furniture_count, 'rangement')} et ${plural(room.item_count, 'objet')} seront supprimés avec elle.`
+            ? room.item_count
+              ? `${plural(room.furniture_count, 'rangement')} et ${plural(room.item_count, 'objet')} seront supprimés avec elle.`
+              : `${plural(room.furniture_count, 'rangement')} ${room.furniture_count > 1 ? 'seront supprimés' : 'sera supprimé'} avec elle.`
             : '',
           'Supprimer',
           async () => {
@@ -103,13 +104,24 @@ export default function HomeScreen() {
     );
   }
 
-  const alerts = data?.alerts;
-  const toEat = alerts ? alerts.expired.length + alerts.expiringSoon.length : 0;
-  const toBuy = alerts?.lowStock.length ?? 0;
-  const details = [
-    toEat > 0 && `${toEat} à finir bientôt`,
-    toBuy > 0 && `${toBuy} à racheter`,
-  ].filter(Boolean);
+  const counts = alertCounts(alerts);
+  const lines: AlertLine[] = [
+    {
+      count: counts.expired,
+      icon: 'warning',
+      text: plural(counts.expired, 'produit périmé', 'produits périmés'),
+      route: '/alerts',
+    },
+    { count: counts.soon, icon: 'hourglass', text: `${plural(counts.soon, 'produit')} à finir bientôt`, route: '/alerts' },
+    {
+      count: counts.frozen,
+      icon: 'snowflake',
+      text: `${plural(counts.frozen, 'produit')} au congélateur depuis ${FREEZER_WARNING_MONTHS} mois`,
+      route: '/alerts',
+    },
+    { count: counts.toBuy, icon: 'cart', text: `${plural(counts.toBuy, 'produit')} à racheter`, route: '/shopping' },
+  ];
+  const shown = lines.filter((l) => l.count > 0);
 
   return (
     <View style={{ flex: 1 }}>
@@ -119,15 +131,22 @@ export default function HomeScreen() {
         keyExtractor={(r) => String(r?.id ?? 'filler')}
         numColumns={2}
         columnWrapperStyle={{ gap: spacing.md, paddingHorizontal: spacing.lg }}
-        contentContainerStyle={{ gap: spacing.md, paddingTop: spacing.xl, paddingBottom: 110 }}
+        contentContainerStyle={{ gap: spacing.md, paddingTop: spacing.lg, paddingBottom: 110 }}
         ListHeaderComponent={
           // Only shown when there is something to act on
-          details.length ? (
+          shown.length ? (
             <View style={styles.banner}>
-              <Icon name="warning" size={32} />
-              <View style={{ flex: 1 }}>
-                <Text style={[font.heading, { color: colors.onPrimary }]}>{details.join(' · ')}</Text>
-              </View>
+              {shown.map((line, i) => (
+                <Pressable
+                  key={line.icon}
+                  accessibilityRole="button"
+                  onPress={() => router.navigate(line.route)}
+                  style={({ pressed }) => [styles.bannerLine, i > 0 && styles.bannerDivider, pressed && { opacity: 0.6 }]}>
+                  <Icon name={line.icon} size={26} />
+                  <Text style={[font.bodyStrong, { flex: 1, color: colors.onPrimary }]}>{line.text}</Text>
+                  <Icon name="chevron-forward" size={16} color={colors.onPrimary} />
+                </Pressable>
+              ))}
             </View>
           ) : undefined
         }
@@ -151,16 +170,25 @@ export default function HomeScreen() {
   );
 }
 
+type AlertLine = { count: number; icon: IconName; text: string; route: '/alerts' | '/shopping' };
+
 const styles = {
   banner: {
     marginHorizontal: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    ...depth(4, colors.primaryDark),
+  },
+  bannerLine: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: spacing.md,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primary,
-    borderBottomWidth: 4,
-    borderBottomColor: colors.primaryDark,
+    paddingVertical: spacing.md,
+  },
+  bannerDivider: {
+    borderTopWidth: 1,
+    borderTopColor: colors.primaryDark,
   },
 };

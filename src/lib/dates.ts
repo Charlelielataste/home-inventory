@@ -91,3 +91,20 @@ export function frozenNeedsCheck(frozenAt: string | null, snoozedUntil: string |
   if (frozenAt > addToToday({ months: -FREEZER_WARNING_MONTHS })) return false;
   return !snoozedUntil || snoozedUntil <= todayIso();
 }
+
+/** Local notifications (expiry / freezer reminders) are sent at this hour. */
+export const REMINDER_HOUR = 9;
+
+/** ISO date + months (day clamped like addToToday: 31/01 + 1 month = 28/02). */
+export function addMonthsToIso(iso: string, months: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const first = new Date(y, m - 1 + months, 1);
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  return toIso(new Date(first.getFullYear(), first.getMonth(), Math.min(d, lastDay)));
+}
+
+/** Local Date for `iso` + `dayOffset` days, at `hour`:00. */
+export function isoAt(iso: string, hour: number, dayOffset = 0): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d + dayOffset, hour);
+}

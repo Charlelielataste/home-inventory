@@ -34,6 +34,7 @@ const ICONS = {
   history: 'ph:clock-counter-clockwise-duotone',
   eraser: 'ph:eraser-duotone',
   bell: 'ph:bell-ringing-duotone',
+  shield: 'ph:shield-check-duotone',
   'cart-add': 'ph:shopping-cart-simple-bold',
 
   // ---- Tabs & illustrations (Fluent) ----

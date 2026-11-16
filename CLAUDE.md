@@ -53,6 +53,7 @@ src/
     room/[id].tsx          Rangements d'une pièce
     furniture/[id].tsx     Objets d'un rangement, boutons − / +, filtre si > 8 objets ; appui long = mode sélection → suppression groupée
     item/[id].tsx          Formulaire objet en modal ; id = "new" (+ param furnitureId) pour créer
+    privacy.tsx            Politique de confidentialité (Réglages › À propos)
   components/
     autocomplete-input.tsx Champ nom d'objet + autocomplétion (historique puis dictionnaire)
     barcode-scanner.tsx    Modal caméra (EAN-13/8, UPC-A/E)
@@ -72,6 +73,7 @@ src/
     use-query.ts           Hook useQuery(loader, key) : charge depuis SQLite et recharge au focus de l'écran
     alerts.tsx             AlertsProvider / useAlerts() / alertCounts() : alertes partagées (bandeau, pastilles), recalculées à chaque écriture SQLite et au retour au premier plan
     reminders.ts           Notifications locales : planReminders() (pur) + syncReminders(db) qui reprogramme tout
+    privacy.ts             Texte de la politique de confidentialité (source unique : écran + page web)
   ui/
     theme.ts               Couleurs, tints pastel (tintFor), tons des badges, spacing, radius, fonts/font, card
     icon.tsx               Composant Icon (SVG) ; icons-data.ts = généré par scripts/build-icons.mjs
@@ -135,6 +137,8 @@ src/
 - Pas de nouvelle dépendance sans vérifier qu'elle est dans Expo Go et l'installer via `npx expo install`.
 
 ## Build et distribution
+
+- **Politique de confidentialité** (obligatoire sur Google Play) : texte dans `src/lib/privacy.ts`, affiché dans l'app (`/privacy`) et publié sur GitHub Pages (`docs/privacy/index.html`, dépôt public, branche `main`, dossier `/docs`) → `PRIVACY_URL`. Après chaque modif du texte : `node scripts/build-privacy.mjs` (couleurs reprises de `theme.ts`), mettre à jour `PRIVACY_UPDATED`, commit + push. Si l'app se met à collecter ou envoyer quoi que ce soit, mettre à jour ce texte **et** le formulaire « Sécurité des données » de la Play Console.
 
 - Projet EAS `@hawkcio/inventaire-maison`. APK testeurs : `npx eas-cli@latest build -p android --profile preview` (lien d'installation sur expo.dev). Profil `production` = AAB pour le Play Store (pas encore utilisé).
 

@@ -65,6 +65,7 @@ export default function RootLayout() {
             <Stack.Screen name="room/[id]" options={{ title: '' }} />
             <Stack.Screen name="furniture/[id]" options={{ title: '' }} />
             <Stack.Screen name="item/[id]" options={{ presentation: 'modal', title: '' }} />
+            <Stack.Screen name="privacy" options={{ title: 'Confidentialité' }} />
           </Stack>
           <DialogHost />
         </ThemeProvider>

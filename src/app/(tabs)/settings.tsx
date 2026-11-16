@@ -1,4 +1,4 @@
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import type { PermissionResponse } from 'expo-notifications';
 import { useCallback, useState } from 'react';
 import { Linking, ScrollView, Text, View } from 'react-native';
@@ -126,6 +126,16 @@ export default function SettingsScreen() {
           onPress={onForget}
         />
         <Button title="Tout effacer" icon="trash" variant="secondary" onPress={onWipe} />
+      </View>
+
+      <SectionTitle>À propos</SectionTitle>
+      <View style={{ paddingHorizontal: spacing.lg, gap: spacing.sm }}>
+        <Button
+          title="Confidentialité"
+          icon="shield"
+          variant="secondary"
+          onPress={() => router.push('/privacy')}
+        />
       </View>
     </ScrollView>
   );

@@ -141,6 +141,8 @@ src/
 - **Politique de confidentialité** (obligatoire sur Google Play) : texte dans `src/lib/privacy.ts`, affiché dans l'app (`/privacy`) et publié sur GitHub Pages (`docs/privacy/index.html`, dépôt public, branche `main`, dossier `/docs`) → `PRIVACY_URL`. Après chaque modif du texte : `node scripts/build-privacy.mjs` (couleurs reprises de `theme.ts`), mettre à jour `PRIVACY_UPDATED`, commit + push. Si l'app se met à collecter ou envoyer quoi que ce soit, mettre à jour ce texte **et** le formulaire « Sécurité des données » de la Play Console.
 
 - Projet EAS `@hawkcio/inventaire-maison`. APK testeurs : `npx eas-cli@latest build -p android --profile preview` (lien d'installation sur expo.dev). Profil `production` = AAB pour le Play Store (pas encore utilisé).
+- **Permissions Android** : seulement CAMERA, INTERNET (Open Food Facts) et VIBRATE (notifications). Celles ajoutées par des dépendances sans être utiles (SYSTEM_ALERT_WINDOW, stockage externe, RECORD_AUDIO) sont retirées via `android.blockedPermissions`. Vérifier avec `npx expo config --type introspect` après l'ajout d'un module. Toute nouvelle permission = revoir la fiche Play (sécurité des données) et la politique de confidentialité.
+- Fiche Play Store (textes, réponses aux questionnaires de la Play Console) : `store/play-listing.md`.
 
 ## Décisions prises avec l'utilisateur
 

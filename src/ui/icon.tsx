@@ -5,6 +5,11 @@ import { colors } from './theme';
 
 export type { IconName };
 
+/** Icon name stored in the database (custom icon): may come from a newer build or a backup. */
+export function isIconName(name: string | null | undefined): name is IconName {
+  return !!name && Object.prototype.hasOwnProperty.call(ICON_SVGS, name);
+}
+
 type Props = {
   name: IconName;
   size?: number;

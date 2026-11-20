@@ -34,7 +34,10 @@ function subjectBox(png) {
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024"><image href="${dataUri(png)}" width="1024" height="1024"/></svg>`,
   ).render();
   const { width, height, pixels } = probe;
-  let x0 = width, y0 = height, x1 = 0, y1 = 0;
+  let x0 = width,
+    y0 = height,
+    x1 = 0,
+    y1 = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (pixels[(y * width + x) * 4 + 3] > 24) {
@@ -73,7 +76,11 @@ write('assets/images/favicon.png', fullSvg, 48);
 // Android adaptive icon: launchers mask the layers (circle, squircle…) and only
 // guarantee a centered circle of 66% → keep the subject inside ~56%.
 write('assets/images/android-icon-foreground.png', centered(0.56), 1024);
-write('assets/images/android-icon-background.png', `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="${LAGOON}"/></svg>`, 1024);
+write(
+  'assets/images/android-icon-background.png',
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="${LAGOON}"/></svg>`,
+  1024,
+);
 // Themed icons (Android 13+): single color, tinted by the system → keep the dark outlines only
 // (alpha = 6 × (alpha − luminance) − 3)
 write('assets/images/android-icon-monochrome.png', centered(0.56, { filter: true }), 1024);

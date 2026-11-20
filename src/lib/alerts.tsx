@@ -65,5 +65,6 @@ export function alertCounts(alerts: Alerts | undefined) {
   const soon = alerts?.expiringSoon.length ?? 0;
   const frozen = alerts?.frozenLong.length ?? 0;
   const toBuy = alerts?.lowStock.length ?? 0;
-  return { expired, soon, frozen, toBuy, expiry: expired + soon + frozen };
+  const partlyDated = alerts?.partlyDated.length ?? 0;
+  return { expired, soon, frozen, toBuy, partlyDated, expiry: expired + soon + frozen };
 }

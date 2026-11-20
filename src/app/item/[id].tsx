@@ -1,19 +1,26 @@
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { ActivityIndicator, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AutocompleteInput } from '@/components/autocomplete-input';
 import { BarcodeScanner } from '@/components/barcode-scanner';
+import { CategoryPicker } from '@/components/item-form/category-picker';
+import { ExpirySection } from '@/components/item-form/expiry-section';
+import { resolveDuplicate } from '@/components/item-form/resolve-duplicate';
+import { StockSection } from '@/components/item-form/stock-section';
+import { useBarcodeLookup } from '@/components/item-form/use-barcode-lookup';
+import { useStockFields } from '@/components/item-form/use-stock-fields';
 import { LocationPicker } from '@/components/location-picker';
 import {
   createItem,
   deleteItem,
   findDuplicate,
-  findKnownByBarcode,
   type FurnitureWithRoom,
   getItem,
+  type Item,
+  itemBatches,
   type ItemInput,
   type KnownProduct,
   listAllFurniture,
@@ -22,65 +29,127 @@ import {
   rememberProduct,
   updateItem,
 } from '@/db/queries';
-import { CATEGORIES, categoryIcon, furnitureIcon, isFreezer, SUBCATEGORIES } from '@/lib/catalog';
+import { batchesTotal, isSingleDate } from '@/lib/batches';
 import {
-  addToToday,
-  daysUntil,
-  describeExpiry,
-  FREEZER_WARNING_MONTHS,
-  frToIso,
-  isoToFr,
-  THAWED_SHELF_DAYS,
-  todayIso,
-} from '@/lib/dates';
-import { lookupBarcode } from '@/lib/openfoodfacts';
-import { capitalize } from '@/lib/text';
-import { formatNumber, formatQuantity, getUnit, isUnitKey, parseNumber, type UnitKey, UNITS } from '@/lib/units';
-import { Button, Checkbox, Chip, ChipRow, confirm, DialogHost, IconButton, ListRow, showDialog, showMessage, TextField } from '@/ui/components';
-import { colors, font, fonts, spacing } from '@/ui/theme';
-
-const EXPIRY_SHORTCUTS: [string, Parameters<typeof addToToday>[0]][] = [
-  ['+3 j', { days: 3 }],
-  ['+1 sem.', { days: 7 }],
-  ['+1 mois', { months: 1 }],
-  ['+6 mois', { months: 6 }],
-  ['+1 an', { years: 1 }],
-];
-
-type ScanStatus = { loading: boolean; message?: string };
+  categoryCanFreeze,
+  categoryHasExpiry,
+  categoryIcon,
+  customIcon,
+  DEFAULT_CATEGORY,
+  furnitureIconOf,
+  isFreezer,
+} from '@/lib/catalog';
+import { isoToFr, todayIso } from '@/lib/dates';
+import { giveFeedback } from '@/lib/feedback';
+import { type FreezerFields, locationChange, type SavedFreezer } from '@/lib/freezer';
+import { buildItemInput, fitLots, type Lots } from '@/lib/stock-form';
+import { formatNumber, type MeasureUnit, parseCount } from '@/lib/units';
+import { useKeyboardHeight } from '@/lib/use-keyboard-height';
+import {
+  Button,
+  confirm,
+  DialogHost,
+  FieldLabel,
+  Hint,
+  IconButton,
+  type IconName,
+  ListRow,
+  showError,
+  TextField,
+} from '@/ui/components';
+import { colors, spacing } from '@/ui/theme';
 
 export default function ItemScreen() {
-  const params = useLocalSearchParams<{ id: string; furnitureId?: string }>();
+  // `barcode`: scanned from the furniture screen (quick scan), looked up on open.
+  // `shopping`: added from the Shopping tab, to buy: out of stock, no quantity,
+  // expiry or freezing (only what helps to find it in the shop and put it away).
+  const params = useLocalSearchParams<{ id: string; furnitureId?: string; barcode?: string; shopping?: string }>();
   const isNew = params.id === 'new';
+  const toBuy = isNew && params.shopping === '1';
   const itemId = isNew ? null : Number(params.id);
   const initialFurnitureId = params.furnitureId ? Number(params.furnitureId) : null;
   const db = useSQLiteContext();
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
 
   const [loaded, setLoaded] = useState(isNew);
   const [name, setName] = useState('');
-  const [quantityText, setQuantityText] = useState('1');
-  const [unit, setUnit] = useState<UnitKey>('pcs');
-  const [category, setCategory] = useState<string | null>(null);
+  /** Custom icon (« Personnalisé »), null = from the category */
+  const [icon, setIcon] = useState<IconName | null>(null);
+  const stock = useStockFields();
+  const [category, setCategory] = useState<string>(DEFAULT_CATEGORY);
   const [subcategory, setSubcategory] = useState<string | null>(null);
   const [minText, setMinText] = useState('');
-  const [expiresText, setExpiresText] = useState('');
-  const [frozenAt, setFrozenAt] = useState<string | null>(null);
+  /** Expiry, freezing, batches (several dates; null = one date for all) */
+  const [freezer, setFreezer] = useState<FreezerFields>({
+    frozenAt: null,
+    expiresText: '',
+    lots: null,
+    thawedUntil: null,
+  });
+  const changeFreezer = (patch: Partial<FreezerFields>) => setFreezer((f) => ({ ...f, ...patch }));
   const [notes, setNotes] = useState('');
-  /** Message shown after taking the item out of the freezer. */
-  const [thawNote, setThawNote] = useState<string | null>(null);
-  /** Frozen as of the last save (not just checked in this form). */
-  const [savedFrozen, setSavedFrozen] = useState(false);
-  const [barcode, setBarcode] = useState<string | null>(null);
-  const [furnitureId, setFurnitureId] = useState<number | null>(
-    params.furnitureId ? Number(params.furnitureId) : null,
-  );
+  /** Expiry and freezing as of the last save (not just changed in this form); null = new item */
+  const [saved, setSaved] = useState<(NonNullable<SavedFreezer> & { hasExpiry: boolean }) | null>(null);
+  const [furnitureId, setFurnitureId] = useState<number | null>(initialFurnitureId);
 
   const [history, setHistory] = useState<KnownProduct[]>([]);
   const [allFurniture, setAllFurniture] = useState<FurnitureWithRoom[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [scan, setScan] = useState<ScanStatus>({ loading: false });
+
+  const applyProduct = (
+    p: {
+      name: string;
+      /** Size of one item; undefined = leave the size fields as they are */
+      size?: number | null;
+      size_unit?: MeasureUnit | null;
+      category: string | null;
+      subcategory?: string | null;
+      icon?: string | null;
+    },
+    quantity?: number | null,
+  ) => {
+    setName(p.name);
+    // Known product (history, barcode already scanned): its remembered icon, automatic otherwise
+    if (p.icon !== undefined) setIcon(customIcon(p.icon));
+    if (p.size_unit !== undefined) stock.setSize(p.size, p.size_unit);
+    if (p.category) {
+      setCategory(p.category);
+      setSubcategory(p.subcategory ?? null);
+    }
+    if (quantity) stock.resetQuantity(quantity);
+  };
+
+  const scanner = useBarcodeLookup({
+    initialBarcode: params.barcode,
+    hasName: !!name.trim(),
+    onProduct: applyProduct,
+    onSamePack: stock.addItems,
+    // Its dates were the previous product's
+    onOtherProduct: () => changeFreezer({ lots: null }),
+  });
+
+  /** Fills the form with the saved item */
+  const fill = useEffectEvent((item: Item) => {
+    setName(item.name);
+    setIcon(customIcon(item.icon));
+    stock.load(item);
+    setCategory(item.category ?? DEFAULT_CATEGORY);
+    setSubcategory(item.subcategory);
+    setMinText(item.min_quantity !== null ? formatNumber(item.min_quantity) : '');
+    const batches = itemBatches(item);
+    const fields = {
+      frozenAt: item.frozen_at,
+      expiresText: isoToFr(item.expires_at),
+      lots: isSingleDate(batches, item.quantity) ? null : { batches, base: item.quantity },
+    };
+    setFreezer({ ...fields, thawedUntil: null });
+    setSaved({ ...fields, hasExpiry: !!item.expires_at });
+    setNotes(item.notes ?? '');
+    scanner.setBarcode(item.barcode);
+    setFurnitureId(item.furniture_id);
+    setLoaded(true);
+  });
 
   useEffect(() => {
     (async () => {
@@ -89,166 +158,122 @@ export default function ItemScreen() {
       setAllFurniture(furniture);
       // New item created directly in a freezer: checked by default
       const target = furniture.find((f) => f.id === initialFurnitureId);
-      if (itemId === null && target && isFreezer(target.name)) setFrozenAt(todayIso());
+      if (itemId === null && target && isFreezer(target.name)) setFreezer((f) => ({ ...f, frozenAt: todayIso() }));
       if (itemId !== null) {
         const item = await getItem(db, itemId);
         if (!item) return router.back();
-        setName(item.name);
-        setQuantityText(formatNumber(item.quantity));
-        setUnit(isUnitKey(item.unit) ? item.unit : 'pcs');
-        setCategory(item.category);
-        setSubcategory(item.subcategory);
-        setMinText(item.min_quantity !== null ? formatNumber(item.min_quantity) : '');
-        setExpiresText(isoToFr(item.expires_at));
-        setFrozenAt(item.frozen_at);
-        setSavedFrozen(!!item.frozen_at);
-        setNotes(item.notes ?? '');
-        setBarcode(item.barcode);
-        setFurnitureId(item.furniture_id);
-        setLoaded(true);
+        fill(item);
       }
     })();
   }, [db, itemId, initialFurnitureId]);
 
   const location = allFurniture.find((f) => f.id === furnitureId);
-  const step = getUnit(unit).step;
-  const expiresIso = expiresText.trim() ? frToIso(expiresText) : null;
+  const shownLots = fitLots(freezer.lots, stock.quantity);
+  // Only shown when they make sense for the category (none for tools, no « Congelé » for
+  // drugs…). Still shown when the saved item has a value, so it is never silently lost.
+  const showExpiry = !toBuy && (categoryHasExpiry(category) || !!saved?.hasExpiry);
+  const showFrozen = !toBuy && (categoryCanFreeze(category) || !!saved?.frozenAt);
 
-  const bumpQuantity = (delta: number) => {
-    const current = parseNumber(quantityText) ?? 0;
-    setQuantityText(formatNumber(Math.max(0, current + delta)));
+  const changeLots = (lots: Lots) => {
+    changeFreezer({ lots });
+    // A date for more items than the stock holds: bought more
+    const dated = batchesTotal(lots.batches);
+    if (dated > (stock.quantity ?? 0)) stock.changeQuantity(String(dated));
   };
 
-  /**
-   * Changes the unit. When creating, if the quantity still equals the previous unit's step
-   * (the default), use the new unit's step: "100 g" rather than "1 g".
-   */
-  const changeUnit = (next: UnitKey) => {
-    setUnit(next);
-    if (isNew && parseNumber(quantityText) === getUnit(unit).step) {
-      setQuantityText(formatNumber(getUnit(next).step));
-    }
-  };
-
-  const applyProduct = (
-    p: { name: string; unit: UnitKey | null; category: string | null; subcategory?: string | null },
-    quantity?: number | null,
-  ) => {
-    setName(p.name);
-    if (p.unit) changeUnit(p.unit);
-    if (p.category) {
-      setCategory(p.category);
-      setSubcategory(p.subcategory ?? null);
-    }
-    if (quantity) setQuantityText(formatNumber(quantity));
-  };
-
-  const onScanned = async (code: string) => {
-    setScannerOpen(false);
-    setBarcode(code);
-    setScan({ loading: true });
-
-    // 1. Already scanned before: works offline
-    const known = await findKnownByBarcode(db, code);
-    if (known) {
-      applyProduct(known);
-      setScan({ loading: false, message: 'Produit reconnu (déjà scanné).' });
-      return;
-    }
-    // 2. Open Food Facts & co open databases
-    try {
-      const product = await lookupBarcode(code);
-      if (product) {
-        applyProduct(product, product.quantity);
-        setScan({ loading: false, message: 'Produit trouvé sur Open Food Facts.' });
-      } else {
-        setScan({
-          loading: false,
-          message: 'Produit inconnu : saisis son nom, il sera associé à ce code-barres pour la prochaine fois.',
-        });
-      }
-    } catch {
-      setScan({
-        loading: false,
-        message: 'Pas de connexion : saisis le nom, le code-barres sera mémorisé.',
-      });
-    }
+  const moveTo = (id: number) => {
+    setFurnitureId(id);
+    setPickerOpen(false);
+    const target = allFurniture.find((f) => f.id === id);
+    if (!target) return;
+    const patch = locationChange(freezer, {
+      fromFreezer: !!location && isFreezer(location.name),
+      toFreezer: isFreezer(target.name),
+      canFreeze: showFrozen,
+      saved,
+    });
+    if (patch) changeFreezer(patch);
   };
 
   const finish = async (input: ItemInput) => {
+    // The item is already saved: a failing autocomplete history must not report a failed save
+    // (saving again would then create the item twice)
     await rememberProduct(db, {
       name: input.name,
-      unit: input.unit,
+      size: input.size,
+      size_unit: input.size_unit,
       category: input.category,
       subcategory: input.subcategory,
       barcode: input.barcode,
-    });
+      icon: input.icon,
+      pack_quantity: input.barcode ? scanner.packQuantity : null,
+    }).catch((e) => console.warn('rememberProduct failed', e));
+    giveFeedback('success');
     router.back();
   };
 
-  const save = async () => {
-    const cleanName = capitalize(name);
-    const quantity = parseNumber(quantityText);
-    const min = minText.trim() ? parseNumber(minText) : null;
-
-    if (!cleanName) return showMessage('Nom manquant', "Donne un nom à l'objet.");
-    if (quantity === null || quantity < 0) return showMessage('Quantité invalide', 'Saisis un nombre positif.');
-    if (minText.trim() && (min === null || min < 0)) return showMessage('Seuil invalide', 'Saisis un nombre positif.');
-    if (expiresText.trim() && !expiresIso) return showMessage('Date invalide', 'Format attendu : JJ/MM/AAAA.');
-    if (!furnitureId) return showMessage('Emplacement manquant', 'Choisis où est rangé cet objet.');
-
-    const input: ItemInput = {
-      furniture_id: furnitureId,
-      name: cleanName,
-      quantity,
-      unit,
+  /** True once saved (the screen is closing), false when nothing was written. */
+  const write = async (): Promise<boolean> => {
+    const result = buildItemInput({
+      name,
+      icon,
+      stock: stock.stock,
+      sizeText: stock.sizeText,
+      sizeUnit: stock.sizeUnit,
       category,
-      subcategory: category ? subcategory : null,
-      min_quantity: min,
-      expires_at: expiresIso,
-      frozen_at: frozenAt,
-      barcode,
-      notes: notes.trim() || null,
-    };
+      subcategory,
+      minText,
+      expiresText: freezer.expiresText,
+      lots: freezer.lots,
+      frozenAt: freezer.frozenAt,
+      notes,
+      barcode: scanner.barcode,
+      furnitureId,
+      toBuy,
+      showExpiry,
+      showFrozen,
+    });
+    if ('error' in result) {
+      showError(...result.error);
+      return false;
+    }
+    const { input } = result;
 
     if (itemId !== null) {
       await updateItem(db, itemId, input);
-      return finish(input);
+    } else {
+      const duplicate = await findDuplicate(db, input);
+      const choice = duplicate ? await resolveDuplicate(duplicate, input, toBuy) : 'separate';
+      if (choice === 'cancel') return false;
+      if (choice === 'merge') await mergeIntoItem(db, duplicate!.id, input);
+      else await createItem(db, input);
     }
+    await finish(input);
+    return true;
+  };
 
-    const duplicate = await findDuplicate(db, furnitureId, cleanName, unit, !!frozenAt);
-    if (!duplicate) {
-      await createItem(db, input);
-      return finish(input);
+  // A second tap while saving (or closing) would save twice and go back twice
+  const saving = useRef(false);
+  const save = async () => {
+    if (saving.current) return;
+    saving.current = true;
+    let done = false;
+    try {
+      done = await write();
+    } catch (e) {
+      // Writes run in a transaction: nothing was changed, the form keeps what was typed
+      console.error('Item save failed', e);
+      showError('Enregistrement impossible', 'Rien n’a été modifié. Réessaie dans un instant.');
+    } finally {
+      if (!done) saving.current = false;
     }
-    showDialog({
-      title: 'Déjà présent',
-      message: `« ${duplicate.name} » est déjà ici (${formatQuantity(duplicate.quantity, duplicate.unit)}). Ajouter ${formatQuantity(quantity, unit)} au stock existant ?`,
-      buttons: [
-        {
-          text: 'Additionner',
-          style: 'primary',
-          onPress: async () => {
-            await mergeIntoItem(db, duplicate.id, input);
-            finish(input);
-          },
-        },
-        {
-          text: 'Créer à part',
-          onPress: async () => {
-            await createItem(db, input);
-            finish(input);
-          },
-        },
-        { text: 'Annuler', style: 'cancel' },
-      ],
-    });
   };
 
   const remove = () =>
     itemId !== null &&
     confirm(`Supprimer « ${name} » ?`, '', 'Supprimer', async () => {
       await deleteItem(db, itemId);
+      giveFeedback('delete');
       router.back();
     });
 
@@ -257,15 +282,11 @@ export default function ItemScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior="padding"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}>
+    <View style={{ flex: 1 }}>
       <Stack.Screen
         options={{
-          title: isNew ? 'Nouvel objet' : 'Modifier',
-          headerRight: () =>
-            isNew ? null : <IconButton icon="trash" label="Supprimer" onPress={remove} />,
+          title: toBuy ? 'À acheter' : isNew ? 'Nouvel objet' : 'Modifier',
+          headerRight: () => (isNew ? null : <IconButton icon="trash" label="Supprimer" onPress={remove} />),
         }}
       />
       <ScrollView
@@ -278,141 +299,82 @@ export default function ItemScreen() {
             label="Nom"
             value={name}
             onChangeText={setName}
+            icon={icon}
+            onIconChange={setIcon}
+            defaultIcon={categoryIcon(category, subcategory)}
+            tintKey={category}
             onSelect={(s) => applyProduct(s)}
             history={history}
             autoFocus={isNew}
           />
-          <Button
-            title={barcode ? `Code-barres : ${barcode}` : 'Scanner un code-barres'}
-            icon="barcode"
-            variant="secondary"
-            onPress={() => setScannerOpen(true)}
-          />
-          {scan.loading && <ActivityIndicator color={colors.text} />}
-          {!!scan.message && <Text style={[font.small, { color: colors.textMuted }]}>{scan.message}</Text>}
+          {/* Scan only when adding; once saved, the barcode is just shown (if any) */}
+          {isNew && !toBuy && (
+            <Button
+              title={scanner.barcode ? `Code-barres : ${scanner.barcode}` : 'Scanner un code-barres'}
+              icon="barcode"
+              variant="secondary"
+              onPress={scanner.openScanner}
+            />
+          )}
+          {!isNew && !!scanner.barcode && (
+            <Button title={`Code-barres : ${scanner.barcode}`} icon="barcode" variant="secondary" readOnly />
+          )}
+          {scanner.scan.loading && <ActivityIndicator color={colors.text} />}
+          {!!scanner.scan.message && <Hint>{scanner.scan.message}</Hint>}
         </View>
 
-        {/* Quantity + unit */}
-        <View style={{ gap: spacing.sm }}>
-          <Text style={labelStyle}>Quantité</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-            <IconButton icon="remove" label="Moins" variant="filled" onPress={() => bumpQuantity(-step)} />
-            <View style={{ flex: 1 }}>
-              <TextField
-                value={quantityText}
-                onChangeText={setQuantityText}
-                keyboardType="decimal-pad"
-                selectTextOnFocus
-                style={{ textAlign: 'center', fontSize: 22, fontFamily: fonts.bold }}
-              />
-            </View>
-            <IconButton icon="add" label="Plus" variant="filled" onPress={() => bumpQuantity(step)} />
-          </View>
-          <ChipRow>
-            {UNITS.map((u) => (
-              <Chip key={u.key} label={u.label} selected={unit === u.key} onPress={() => changeUnit(u.key)} />
-            ))}
-          </ChipRow>
-        </View>
+        <CategoryPicker
+          category={category}
+          subcategory={subcategory}
+          onChange={(c, sc) => {
+            setCategory(c);
+            setSubcategory(sc);
+          }}
+        />
+
+        <StockSection fields={stock} toBuy={toBuy} />
 
         {/* Location */}
         <View style={{ gap: spacing.sm }}>
-          <Text style={labelStyle}>Emplacement</Text>
+          <FieldLabel>Emplacement</FieldLabel>
           <ListRow
             title={location ? location.name : 'Choisir…'}
             subtitle={location?.room_name}
-            icon={location ? furnitureIcon(location.name) : 'location'}
+            icon={location ? furnitureIconOf(location) : 'location'}
             tintKey={location?.name}
             inset={false}
             chevron
             onPress={() => setPickerOpen(true)}
           />
+          {toBuy && <Hint>Où le ranger une fois acheté.</Hint>}
         </View>
 
-        {/* Category */}
-        <View style={{ gap: spacing.sm }}>
-          <Text style={labelStyle}>Catégorie</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-            {CATEGORIES.map((c) => (
-              <Chip
-                key={c}
-                label={c}
-                icon={categoryIcon(c, null)}
-                selected={category === c}
-                onPress={() => {
-                  setCategory(category === c ? null : c);
-                  setSubcategory(null);
-                }}
-              />
-            ))}
-          </View>
-        </View>
-
-        {/* Subcategory (depends on the chosen category) */}
-        {!!category && (SUBCATEGORIES[category]?.length ?? 0) > 0 && (
-          <View style={{ gap: spacing.sm }}>
-            <Text style={labelStyle}>Sous-catégorie (optionnel)</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-              {SUBCATEGORIES[category].map((sc) => (
-                <Chip
-                  key={sc}
-                  label={sc}
-                  icon={categoryIcon(category, sc)}
-                  selected={subcategory === sc}
-                  onPress={() => setSubcategory(subcategory === sc ? null : sc)}
-                />
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Expiry */}
-        <View style={{ gap: spacing.sm }}>
-          <TextField
-            label="Date de péremption (optionnel)"
-            value={expiresText}
-            onChangeText={setExpiresText}
-            placeholder="JJ/MM/AAAA"
-            keyboardType="numbers-and-punctuation"
-          />
-          <ChipRow>
-            {EXPIRY_SHORTCUTS.map(([label, amount]) => (
-              <Chip key={label} label={label} onPress={() => setExpiresText(isoToFr(addToToday(amount)))} />
-            ))}
-            {!!expiresText && <Chip label="Aucune" onPress={() => setExpiresText('')} />}
-          </ChipRow>
-          {expiresIso && !frozenAt && (
-            <Text style={[font.small, { color: colors.textMuted }]}>{describeExpiry(expiresIso)}</Text>
-          )}
-          <Checkbox
-            label="Congelé"
-            checked={!!frozenAt}
-            onChange={(v) => {
-              setFrozenAt(v ? todayIso() : null);
-              setThawNote(null);
-            }}
-          />
-          <Text style={[font.small, { color: colors.textMuted }]}>
-            {frozenAt
-              ? frozenHint(frozenAt)
-              : `À cocher si tu l’as mis toi-même au congélateur : la péremption n’est plus surveillée et tu seras prévenu après ${FREEZER_WARNING_MONTHS} mois. Acheté déjà surgelé ? Choisis plutôt la catégorie « Surgelés ».`}
-          </Text>
-          {!!thawNote && <Text style={[font.small, { color: colors.textMuted }]}>{thawNote}</Text>}
-        </View>
+        <ExpirySection
+          showExpiry={showExpiry}
+          showFrozen={showFrozen}
+          quantity={stock.quantity}
+          expiresText={freezer.expiresText}
+          onExpiresChange={(expiresText) => changeFreezer({ expiresText })}
+          lots={shownLots}
+          onLotsChange={changeLots}
+          frozenAt={freezer.frozenAt}
+          onFrozenChange={(frozen) => changeFreezer({ frozenAt: frozen ? todayIso() : null, thawedUntil: null })}
+          thawedUntil={freezer.thawedUntil}
+        />
 
         {/* Minimum stock */}
-        <View style={{ gap: spacing.sm }}>
-          <TextField
-            label={`Stock minimum (${getUnit(unit).symbol ?? getUnit(unit).plural}, optionnel)`}
-            value={minText}
-            onChangeText={setMinText}
-            placeholder="Ex : 2"
-            keyboardType="decimal-pad"
-          />
-          <Text style={[font.small, { color: colors.textMuted }]}>
-            {minQuantityHint(minText, unit)}
-          </Text>
-        </View>
+        {!toBuy && (
+          <View style={{ gap: spacing.sm }}>
+            <TextField
+              label="Stock minimum (optionnel)"
+              value={minText}
+              onChangeText={setMinText}
+              placeholder="Ex : 2"
+              keyboardType="number-pad"
+            />
+            <Hint>{minQuantityHint(minText)}</Hint>
+          </View>
+        )}
 
         <TextField
           label="Notes"
@@ -427,62 +389,39 @@ export default function ItemScreen() {
       <View
         style={{
           padding: spacing.lg,
-          paddingBottom: insets.bottom + spacing.md,
+          // Keyboard open: footer pushed just above it (the keyboard already covers the safe area)
+          paddingBottom: (keyboardHeight > 0 ? keyboardHeight : insets.bottom) + spacing.md,
           borderTopWidth: 1,
           borderTopColor: colors.line,
           backgroundColor: colors.background,
         }}>
-        <Button title={isNew ? 'Ajouter' : 'Enregistrer'} icon="check" onPress={save} />
+        <Button
+          title={toBuy ? 'Ajouter à la liste' : isNew ? 'Ajouter' : 'Enregistrer'}
+          icon="check"
+          feedback={false}
+          onPress={save}
+        />
       </View>
 
-      <BarcodeScanner visible={scannerOpen} onScanned={onScanned} onClose={() => setScannerOpen(false)} />
+      <BarcodeScanner visible={scanner.scannerOpen} onScanned={scanner.onScanned} onClose={scanner.closeScanner} />
       <LocationPicker
         visible={pickerOpen}
         furniture={allFurniture}
         selectedId={furnitureId}
-        onSelect={(id) => {
-          setFurnitureId(id);
-          const target = allFurniture.find((f) => f.id === id);
-          if (target && isFreezer(target.name) && !frozenAt) {
-            // Moved into a freezer: automatically marked as frozen
-            setFrozenAt(todayIso());
-            setThawNote(null);
-          } else if (target && !isFreezer(target.name) && frozenAt && location && isFreezer(location.name)) {
-            setFrozenAt(null);
-            // Not saved as frozen yet: just a location change,
-            // keep the expiry date that was entered.
-            if (!savedFrozen) return setPickerOpen(false);
-            // Taken out of the freezer: thawed, eat soon
-            const limit = addToToday({ days: THAWED_SHELF_DAYS });
-            setExpiresText(isoToFr(limit));
-            setThawNote(
-              `Sorti du congélateur : date de péremption mise au ${isoToFr(limit)} (${THAWED_SHELF_DAYS} jours après décongélation). Modifie-la si besoin.`,
-            );
-          }
-          setPickerOpen(false);
-        }}
+        onSelect={moveTo}
         onClose={() => setPickerOpen(false)}
       />
       {/* Native modal screen: needs its own host on iOS (see DialogHost) */}
       <DialogHost />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-const labelStyle = { ...font.label, color: colors.textMuted };
-
 /** Explains in plain words what the entered minimum stock does. */
-function minQuantityHint(minText: string, unit: string): string {
-  const min = minText.trim() ? parseNumber(minText) : null;
-  if (min === null || min < 0) {
+function minQuantityHint(minText: string): string {
+  const min = minText.trim() ? parseCount(minText) : null;
+  if (min === null) {
     return 'Quand il en reste ce nombre ou moins, l’objet apparaît dans l’onglet Courses. Laisse vide pour ne pas être alerté.';
   }
-  return `Tu seras alerté quand il restera ${formatQuantity(min, unit)} ou moins.`;
-}
-
-/** "Congelé le 12/11/2026 (il y a 3 j) · …" */
-function frozenHint(frozenAt: string): string {
-  const days = -daysUntil(frozenAt);
-  const since = days <= 0 ? "aujourd’hui" : `il y a ${days} j`;
-  return `Congelé le ${isoToFr(frozenAt)} (${since}). La date de péremption n’est plus surveillée ; tu seras prévenu après ${FREEZER_WARNING_MONTHS} mois.`;
+  return `Tu seras alerté quand il en restera ${formatNumber(min)} ou moins.`;
 }

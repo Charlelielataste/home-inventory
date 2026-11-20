@@ -4,13 +4,16 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { Platform } from 'react-native';
 
 import { listReminderItems, type ReminderItem } from '@/db/queries';
-import { addMonthsToIso, FREEZER_WARNING_MONTHS, isoAt, REMINDER_HOUR, todayIso } from '@/lib/dates';
+import { isoAt, monthsBetween, monthsLaterIso, REMINDER_HOUR } from '@/lib/dates';
+import { getReminderPrefs, type ReminderPrefs } from '@/lib/reminder-prefs';
 
 /**
- * Local reminders (no server, nothing leaves the phone):
- * - expiry: at REMINDER_HOUR the day before (or the same day if it is too late for that);
- * - freezer: at REMINDER_HOUR on the day an item reaches FREEZER_WARNING_MONTHS months
- *   in the freezer (or the end of its "Ignorer" snooze).
+ * Local reminders (no server, nothing leaves the phone), delays chosen in the Péremption tab
+ * (`reminder-prefs.ts`):
+ * - expiry: at REMINDER_HOUR, `expiryDays` days before (if it is too late for that:
+ *   the day before, else the same day);
+ * - freezer: at REMINDER_HOUR on the day an item reaches `freezerMonths` months
+ *   in the freezer (or the end of its "Ignorer" snooze), the day it shows up in the tab.
  * Items sharing the same time are grouped into one notification. The whole schedule
  * is rebuilt from the database whenever it changes (`syncReminders`).
  */
@@ -31,14 +34,15 @@ Notifications.setNotificationHandler({
   }),
 });
 
-type Kind = 'today' | 'tomorrow' | 'frozen';
+/** expiry: `days` before the expiry date (0 = that day) · frozen: `months` in the freezer */
+type Kind = { type: 'expiry'; days: number } | { type: 'frozen'; months: number };
 type Planned = { date: Date; kind: Kind; names: string[] };
 
-const TITLES: Record<Kind, (n: number) => string> = {
-  today: (n) => (n > 1 ? "Ces produits périment aujourd'hui" : "Ce produit périme aujourd'hui"),
-  tomorrow: (n) => (n > 1 ? 'Ces produits périment demain' : 'Ce produit périme demain'),
-  frozen: () => `Au congélateur depuis ${FREEZER_WARNING_MONTHS} mois`,
-};
+function title(kind: Kind, n: number): string {
+  if (kind.type === 'frozen') return `Au congélateur depuis ${kind.months} mois`;
+  const when = kind.days === 0 ? "aujourd'hui" : kind.days === 1 ? 'demain' : `dans ${kind.days} jours`;
+  return n > 1 ? `Ces produits périment ${when}` : `Ce produit périme ${when}`;
+}
 
 /** "Lait", "Lait et Œufs", "Lait, Œufs, Beurre et 2 autres" */
 function listNames(names: string[]): string {
@@ -49,34 +53,38 @@ function listNames(names: string[]): string {
   return `${shown.slice(0, -1).join(', ')} et ${shown[shown.length - 1]}`;
 }
 
-export function planReminders(items: ReminderItem[], now = new Date()): Planned[] {
+function planReminders(items: ReminderItem[], prefs: ReminderPrefs, now = new Date()): Planned[] {
   const groups = new Map<string, Planned>();
   const add = (date: Date, kind: Kind, name: string) => {
     if (date <= now) return;
-    const key = `${date.getTime()}|${kind}`;
+    const key = `${date.getTime()}|${JSON.stringify(kind)}`;
     const group = groups.get(key) ?? { date, kind, names: [] };
-    group.names.push(name);
+    // Two batches of one product reminded the same day: named once
+    if (!group.names.includes(name)) group.names.push(name);
     groups.set(key, group);
   };
 
-  const today = todayIso();
   for (const item of items) {
     if (item.frozen_at) {
-      let due = addMonthsToIso(item.frozen_at, FREEZER_WARNING_MONTHS);
+      // Same day as the Péremption tab lists it (31/08 + 6 months: 01/03, not 28/02)
+      let due = monthsLaterIso(item.frozen_at, prefs.freezerMonths);
       if (item.frozen_snoozed_until && item.frozen_snoozed_until > due) due = item.frozen_snoozed_until;
-      // Already due: it is in the Péremption tab, no new notification
-      if (due > today) add(isoAt(due, REMINDER_HOUR), 'frozen', item.name);
+      // Due today before REMINDER_HOUR: still scheduled (add() drops past times only).
+      // After "Ignorer", the title gives the real time in the freezer, not the delay.
+      const months = monthsBetween(item.frozen_at, due);
+      add(isoAt(due, REMINDER_HOUR), { type: 'frozen', months }, item.name);
     } else if (item.expires_at) {
-      const dayBefore = isoAt(item.expires_at, REMINDER_HOUR, -1);
-      if (dayBefore > now) add(dayBefore, 'tomorrow', item.name);
-      else add(isoAt(item.expires_at, REMINDER_HOUR), 'today', item.name);
+      // First reminder time still to come: the chosen delay, else the day before, else that day
+      const expiresAt = item.expires_at;
+      const days = [...new Set([prefs.expiryDays, 1, 0])].find((d) => isoAt(expiresAt, REMINDER_HOUR, -d) > now);
+      if (days !== undefined) add(isoAt(expiresAt, REMINDER_HOUR, -days), { type: 'expiry', days }, item.name);
     }
   }
 
   return [...groups.values()].sort((a, b) => a.date.getTime() - b.date.getTime()).slice(0, MAX_SCHEDULED);
 }
 
-export async function ensureChannel() {
+async function ensureChannel() {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
     name: 'Rappels',
@@ -111,7 +119,7 @@ async function doSync(db: SQLiteDatabase) {
     lastSignature = null;
     return;
   }
-  const planned = planReminders(await listReminderItems(db));
+  const planned = planReminders(await listReminderItems(db), getReminderPrefs());
   const signature = JSON.stringify(planned);
   if (signature === lastSignature) return;
 
@@ -120,7 +128,7 @@ async function doSync(db: SQLiteDatabase) {
   for (const p of planned) {
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: TITLES[p.kind](p.names.length),
+        title: title(p.kind, p.names.length),
         body: listNames(p.names),
         data: { url: REMINDER_ROUTE },
       },

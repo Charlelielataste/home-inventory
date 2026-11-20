@@ -2,7 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { alertCounts, useAlerts } from '@/lib/alerts';
@@ -14,7 +14,7 @@ import { colors, fonts } from '@/ui/theme';
 let handledResponseId: string | null = null;
 
 /** Tapping a reminder notification opens the Péremption tab. */
-function useReminderTaps() {
+function useNativeReminderTaps() {
   const response = Notifications.useLastNotificationResponse();
   useEffect(() => {
     if (!response || response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
@@ -24,6 +24,9 @@ function useReminderTaps() {
     if (response.notification.request.content.data?.url === REMINDER_ROUTE) router.navigate(REMINDER_ROUTE);
   }, [response]);
 }
+
+/** No notification responses on web (browser tests only): the hook would throw. */
+const useReminderTaps = Platform.OS === 'web' ? () => {} : useNativeReminderTaps;
 
 /** Colored illustration, dimmed when inactive, on a soft pill when active. */
 function TabIcon({ name, focused }: { name: IconName; focused: boolean }) {
@@ -62,7 +65,9 @@ export default function TabsLayout() {
         tabBarLabelStyle: { fontFamily: fonts.semibold, fontSize: 11 },
         tabBarStyle: {
           backgroundColor: colors.surface,
-          borderTopWidth: 0,
+          // Clear edge: otherwise it blends with the light cards scrolling under it
+          borderTopWidth: 2,
+          borderTopColor: colors.edge,
           elevation: 0,
           // Explicit height: room for the icon pill + label, above the home indicator
           height: 64 + insets.bottom,
@@ -76,7 +81,8 @@ export default function TabsLayout() {
           fontFamily: fonts.semibold,
           fontSize: 11,
         },
-        headerStyle: { backgroundColor: colors.background },
+        // Taller than the default (44 iOS / 56 Android): room around the big title
+        headerStyle: { backgroundColor: colors.background, height: insets.top + 72 },
         headerTitleStyle: { fontFamily: fonts.bold, fontSize: 26, color: colors.text },
         headerShadowVisible: false,
         sceneStyle: { backgroundColor: colors.background },

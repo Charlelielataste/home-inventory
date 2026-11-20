@@ -4,15 +4,17 @@
  * Every color / font goes through this file: screens never hard-code one.
  */
 export const colors = {
-  background: '#F6EFD9', // cream
+  background: '#F8F2DF', // light cream
   surface: '#FFFBEE', // cards, fields
-  text: '#5E4532', // wood brown
-  textMuted: '#A38A70',
+  text: '#463020', // wood brown
+  textMuted: '#836A51',
   /** Bottom "thickness" of cards and buttons (pressable 3D look) */
   edge: '#E6D9B6',
   /** Soft diffuse shadow under raised elements */
   shadow: 'rgba(94, 69, 50, 0.10)',
   line: '#EADFC4',
+  /** Panel grouping cards on the background (rooms on the home screen) */
+  panel: '#F5EED7',
   primary: '#2E4A5E', // lagoon
   primaryDark: '#1D3242',
   onPrimary: '#FFFBEE',
@@ -28,15 +30,20 @@ export const colors = {
   selectedEdge: '#B9D5E4',
   /** Count bubble on tabs (alerts) */
   badge: '#D9604A', // terracotta
+  /** Warm action that is not a deletion (« Épuisé » on item cards): terracotta */
+  warn: '#B9653F',
+  warnDark: '#8E4B2C',
   onBadge: '#FFFBEE',
   disabled: '#CFC3A8',
   backdrop: 'rgba(60, 42, 28, 0.45)',
   /** Camera overlay (barcode scanner) */
   overlay: '#FFFFFF',
+  /** Behind the camera image, before it shows (barcode scanner): dark wood */
+  camera: '#463020',
 };
 
 /** Pastel backgrounds behind illustrations (rooms, furniture, items). */
-export const tints = ['#FFDCC2', '#D4ECF7', '#FFEFA6', '#D2EFC9', '#E8DDF6', '#FAD6DA'] as const;
+const tints = ['#FFDCC2', '#D4ECF7', '#FFEFA6', '#D2EFC9', '#E8DDF6', '#FAD6DA'] as const;
 
 /** Picks a stable pastel for a name (same name → same color). */
 export function tintFor(key: string): string {
@@ -52,7 +59,7 @@ export const tones = {
   low: { bg: '#FFF0A8', fg: '#7A620B' },
   out: { bg: '#E8E0CF', fg: '#7D6B57' },
   frozen: { bg: '#D4ECF7', fg: '#2E5F7A' },
-  neutral: { bg: '#EFE6CF', fg: '#5E4532' },
+  neutral: { bg: '#EFE6CF', fg: '#463020' },
 } as const;
 export type Tone = keyof typeof tones;
 
@@ -84,6 +91,10 @@ export const font = {
     letterSpacing: 0.6,
     color: colors.textMuted,
   },
+  /** Value between − / + (quantities, delays) */
+  number: { fontFamily: fonts.bold, fontSize: 15, color: colors.text },
+  /** Big value between − / + (item form, modals) */
+  numberLarge: { fontFamily: fonts.bold, fontSize: 22, color: colors.text },
 };
 
 /**

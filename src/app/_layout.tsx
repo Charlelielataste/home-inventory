@@ -13,6 +13,7 @@ import { useEffect } from 'react';
 
 import { migrate } from '@/db/schema';
 import { AlertsProvider } from '@/lib/alerts';
+import { preloadFeedback } from '@/lib/feedback';
 import { DialogHost } from '@/ui/components';
 import { colors, fonts } from '@/ui/theme';
 
@@ -43,6 +44,8 @@ export default function RootLayout() {
     if (ready) SplashScreen.hideAsync();
   }, [ready]);
 
+  useEffect(preloadFeedback, []);
+
   if (!ready) return null;
 
   return (
@@ -62,9 +65,9 @@ export default function RootLayout() {
               contentStyle: { backgroundColor: colors.background },
             }}>
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="room/[id]" options={{ title: '' }} />
             <Stack.Screen name="furniture/[id]" options={{ title: '' }} />
             <Stack.Screen name="item/[id]" options={{ presentation: 'modal', title: '' }} />
+            <Stack.Screen name="undated" options={{ title: 'Dates manquantes' }} />
             <Stack.Screen name="privacy" options={{ title: 'Confidentialité' }} />
           </Stack>
           <DialogHost />

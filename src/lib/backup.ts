@@ -3,9 +3,10 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { WIPE_ALL_SQL } from '@/db/queries';
+import { batchesFromDates, dumpAll, syncAllExpiry, wipeAll } from '@/db/queries';
 
 import { todayIso } from './dates';
+import { isMeasureUnit } from './units';
 
 /**
  * Data only lives on the phone: the JSON export lets the user back it up
@@ -16,7 +17,16 @@ import { todayIso } from './dates';
  * Backup file format. Testers keep their exports: bump it only when the format
  * changes, and keep importing every older version.
  */
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 3;
+
+/*
+ * Versions:
+ * 1: `items.unit` (pcs, portion, paquet, g, kg…) + `quantity` in that unit.
+ * 2: `quantity` = number of items, optional size of one item (`size` + `size_unit`),
+ *    `amount` = what is left (absent / null = all full).
+ * 3: `item_batches` = expiry date per batch (lib/batches.ts); `items.expires_at` = earliest.
+ *    Older backups: one batch per dated item, for its whole stock.
+ */
 
 type Backup = {
   app: 'inventaire-maison';
@@ -25,6 +35,8 @@ type Backup = {
   rooms: Record<string, unknown>[];
   furniture: Record<string, unknown>[];
   items: Record<string, unknown>[];
+  /** v3+ */
+  item_batches?: Record<string, unknown>[];
   known_products: Record<string, unknown>[];
 };
 
@@ -33,10 +45,7 @@ export async function exportBackup(db: SQLiteDatabase) {
     app: 'inventaire-maison',
     version: BACKUP_VERSION,
     exported_at: new Date().toISOString(),
-    rooms: await db.getAllAsync('SELECT * FROM rooms'),
-    furniture: await db.getAllAsync('SELECT * FROM furniture'),
-    items: await db.getAllAsync('SELECT * FROM items'),
-    known_products: await db.getAllAsync('SELECT * FROM known_products'),
+    ...(await dumpAll(db)),
   };
 
   const file = new File(Paths.cache, `inventaire-${todayIso()}.json`);
@@ -91,26 +100,73 @@ async function insertRows(db: SQLiteDatabase, table: string, columns: string[], 
   }
 }
 
+type Row = Record<string, unknown>;
+
+/** v1 item → v2: same conversion as migration 6 in schema.ts. */
+function upgradeV1Item({ unit, ...row }: Row): Row {
+  const quantity = typeof row.quantity === 'number' ? row.quantity : 1;
+  const min = typeof row.min_quantity === 'number' ? row.min_quantity : null;
+  if (isMeasureUnit(unit)) {
+    return {
+      ...row,
+      size: quantity > 0 ? quantity : null,
+      size_unit: quantity > 0 ? unit : null,
+      quantity: quantity > 0 ? 1 : 0,
+      min_quantity: min !== null ? 1 : null,
+    };
+  }
+  return {
+    ...row,
+    quantity: quantity > 0 ? Math.max(1, Math.round(quantity)) : 0,
+    min_quantity: min !== null ? Math.round(min) : null,
+  };
+}
+
+/** v1 known product → v2: only measure units are kept, as the size unit. */
+function upgradeV1Known({ unit, ...row }: Row): Row {
+  return { ...row, size_unit: isMeasureUnit(unit) ? unit : null };
+}
+
 /** Replaces ALL current data with the backup's. */
 export async function restoreBackup(db: SQLiteDatabase, data: Backup) {
+  const v1 = (data.version ?? 1) < 2;
+  const items = v1 ? data.items.map(upgradeV1Item) : data.items;
+  const known = v1 ? (data.known_products ?? []).map(upgradeV1Known) : (data.known_products ?? []);
   await db.withTransactionAsync(async () => {
-    await db.execAsync(WIPE_ALL_SQL);
-    await insertRows(db, 'rooms', ['id', 'name', 'position', 'created_at'], data.rooms);
-    await insertRows(db, 'furniture', ['id', 'room_id', 'name', 'position', 'created_at'], data.furniture ?? []);
+    await wipeAll(db);
+    await insertRows(db, 'rooms', ['id', 'name', 'icon', 'position', 'created_at'], data.rooms);
     await insertRows(
       db,
-      'items',
-      [
-        'id', 'furniture_id', 'name', 'quantity', 'unit', 'category', 'subcategory', 'min_quantity',
-        'expires_at', 'frozen_at', 'frozen_snoozed_until', 'barcode', 'notes', 'created_at', 'updated_at',
-      ],
-      data.items,
+      'furniture',
+      ['id', 'room_id', 'name', 'icon', 'position', 'created_at'],
+      data.furniture ?? [],
     );
     await insertRows(
       db,
+      'items',
+      // prettier-ignore
+      [
+        'id', 'furniture_id', 'name', 'icon', 'quantity', 'size', 'size_unit', 'amount', 'category', 'subcategory',
+        'min_quantity', 'expires_at', 'frozen_at', 'frozen_snoozed_until', 'barcode', 'notes', 'created_at',
+        'updated_at',
+      ],
+      items,
+    );
+    if (data.item_batches) {
+      await insertRows(db, 'item_batches', ['id', 'item_id', 'quantity', 'expires_at'], data.item_batches);
+    } else {
+      await batchesFromDates(db);
+    }
+    await syncAllExpiry(db);
+    await insertRows(
+      db,
       'known_products',
-      ['name', 'unit', 'category', 'subcategory', 'barcode', 'use_count', 'last_used'],
-      data.known_products ?? [],
+      // prettier-ignore
+      [
+        'name', 'size', 'size_unit', 'category', 'subcategory', 'barcode', 'icon', 'pack_quantity', 'use_count',
+        'last_used',
+      ],
+      known,
     );
   });
   return { rooms: data.rooms.length, furniture: data.furniture?.length ?? 0, items: data.items.length };

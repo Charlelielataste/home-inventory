@@ -1,5 +1,5 @@
-import type { UnitKey } from './units';
-import { SUBCATEGORIES } from './catalog';
+import { SUBCATEGORIES } from '@/lib/catalog';
+import type { MeasureUnit } from '@/lib/units';
 
 /**
  * Looks up a product by barcode in the open databases
@@ -8,10 +8,13 @@ import { SUBCATEGORIES } from './catalog';
  * Text search (10 req/min) is deliberately NOT used for autocomplete.
  */
 
-export type ProductLookup = {
+type ProductLookup = {
   name: string;
+  /** Number of items in the pack ("6 x 33 cl" → 6), null if not a multipack */
   quantity: number | null;
-  unit: UnitKey | null;
+  /** Size of one item ("33 cl" → 330 mL) */
+  size: number | null;
+  size_unit: MeasureUnit | null;
   category: string;
   subcategory: string | null;
   barcode: string;
@@ -33,46 +36,66 @@ type OffProduct = {
   categories_tags?: string[];
 };
 
-async function fetchWithTimeout(url: string, ms: number) {
+/** Whole lookup (all sources) gives up after this: a slow network must not leave the scan hanging. */
+const LOOKUP_DEADLINE_MS = 10_000;
+
+/** Fetches and parses the JSON, aborted after `ms` (body included). */
+async function fetchJson(url: string, ms: number): Promise<{ ok: boolean; json?: unknown }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, {
+    const res = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'InventaireMaison/1.0 (Android)' },
     });
+    if (!res.ok) return { ok: false };
+    return { ok: true, json: await res.json() };
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** "500 g" -> {500, g}; "1,5 L" -> {1.5, l}; "75 cl" -> {750, ml}; "6 x 33 cl" -> {6, pcs} */
-export function parseOffQuantity(text: string | undefined): { quantity: number; unit: UnitKey } | null {
+/** Measure units as written on packs, longest first ("litre" before "l"), mapped to ours. */
+// prettier-ignore
+const UNIT_ALIASES: [RegExp, (value: number) => [number, MeasureUnit]][] = [
+  [/^(kg|kgs|kilos?|kilogrammes?|kilograms?)$/, (v) => [v, 'kg']],
+  [/^(mg|milligrammes?)$/, (v) => [v / 1000, 'g']],
+  [/^(g|gr|grs|grammes?|grams?)$/, (v) => [v, 'g']],
+  [/^(cl|centilitres?)$/, (v) => [v * 10, 'ml']],
+  [/^(dl|décilitres?|decilitres?)$/, (v) => [v * 100, 'ml']],
+  [/^(ml|millilitres?|milliliters?)$/, (v) => [v, 'ml']],
+  [/^(l|lt|litres?|liters?)$/, (v) => [v, 'l']],
+];
+const UNIT_PATTERN =
+  'kilogrammes?|kilograms?|kilos?|kgs|kg|milligrammes?|mg|grammes?|grams?|grs|gr|g|centilitres?|cl|' +
+  'd[ée]cilitres?|dl|millilitres?|milliliters?|ml|litres?|liters?|lt|l';
+const MEASURE = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNIT_PATTERN})(?![a-zà-ÿ])`);
+/** " x 6" right after the measure, but not " x 2 kg" (another measure). */
+const PACK_AFTER = new RegExp(`^\\s*[x×]\\s*(\\d+)(?![\\d.]|\\s*(?:${UNIT_PATTERN})(?![a-zà-ÿ]))`);
+
+/**
+ * "500 g", "250 gr" -> size 500 g; "1,5 L", "1 litre" -> 1.5 L; "75 cl" -> 750 mL;
+ * "6 x 33 cl", "33cl x 6" -> 6 items of 330 mL; "4 x 125 g" -> 4 items of 125 g.
+ */
+function parseOffQuantity(
+  text: string | undefined,
+): { quantity: number | null; size: number | null; size_unit: MeasureUnit | null } | null {
   if (!text) return null;
-  const t = text.toLowerCase().replace(',', '.');
+  const t = text.toLowerCase().replace(/,/g, '.');
 
-  const pack = t.match(/(\d+)\s*[x×]\s*\d/);
-  if (pack) return { quantity: Number(pack[1]), unit: 'pcs' };
+  // Pack count before the measure ("6 x 33 cl"): the measure is read after it
+  const before = t.match(/(\d+)\s*[x×]\s*(?=\d)/);
+  const rest = before ? t.slice(before.index! + before[0].length) : t;
+  const m = rest.match(MEASURE);
+  // ... or after it ("33cl x 6"), when not followed by another measure
+  const after = m && !before ? rest.slice(m.index! + m[0].length).match(PACK_AFTER) : null;
+  const count = before ? Number(before[1]) : after ? Number(after[1]) : null;
+  if (!m) return count ? { quantity: count, size: null, size_unit: null } : null;
 
-  const m = t.match(/(\d+(?:\.\d+)?)\s*(kg|mg|g|cl|dl|ml|l)\b/);
-  if (!m) return null;
-  const value = Number(m[1]);
-  switch (m[2]) {
-    case 'kg':
-      return { quantity: value, unit: 'kg' };
-    case 'mg':
-      return { quantity: value / 1000, unit: 'g' };
-    case 'g':
-      return { quantity: value, unit: 'g' };
-    case 'l':
-      return { quantity: value, unit: 'l' };
-    case 'dl':
-      return { quantity: value * 100, unit: 'ml' };
-    case 'cl':
-      return { quantity: value * 10, unit: 'ml' };
-    default:
-      return { quantity: value, unit: 'ml' };
-  }
+  const toUnit = UNIT_ALIASES.find(([re]) => re.test(m[2]))?.[1];
+  if (!toUnit) return count ? { quantity: count, size: null, size_unit: null } : null;
+  const [size, size_unit] = toUnit(Number(m[1]));
+  return { quantity: count, size, size_unit };
 }
 
 function guessCategory(tags: string[] | undefined, fallback: string) {
@@ -86,6 +109,7 @@ function guessCategory(tags: string[] | undefined, fallback: string) {
  * Subcategory guessed from Open Food Facts tags (e.g. "en:meats").
  * Only returns values present in SUBCATEGORIES[category].
  */
+// prettier-ignore
 const SUBCATEGORY_TAGS: { category: string; subcategory: string; keywords: string[] }[] = [
   { category: 'Boissons', subcategory: 'Eau', keywords: ['waters'] },
   { category: 'Boissons', subcategory: 'Alcool', keywords: ['alcoholic-beverages', 'wines', 'beers', 'spirits'] },
@@ -124,28 +148,35 @@ function guessSubcategory(tags: string[] | undefined, category: string): string 
  * or throws if the network is unavailable.
  */
 export async function lookupBarcode(barcode: string): Promise<ProductLookup | null> {
+  const deadline = Date.now() + LOOKUP_DEADLINE_MS;
   let networkErrors = 0;
   for (const source of SOURCES) {
+    const remaining = deadline - Date.now();
+    // Out of time: the sources not tried count as unreachable
+    if (remaining <= 0) {
+      networkErrors += 1;
+      continue;
+    }
     try {
-      const res = await fetchWithTimeout(
+      const res = await fetchJson(
         `https://${source.host}/api/v2/product/${encodeURIComponent(barcode)}.json?fields=${FIELDS}`,
-        8000,
+        remaining,
       );
       if (!res.ok) continue;
-      const json = (await res.json()) as { status?: number; product?: OffProduct };
-      const p = json.product;
+      const json = res.json as { status?: number; product?: OffProduct };
+      const p = json?.product;
       const baseName = p?.product_name_fr?.trim() || p?.product_name?.trim();
-      if (json.status !== 1 || !p || !baseName) continue;
+      if (json?.status !== 1 || !p || !baseName) continue;
 
       const brand = p.brands?.split(',')[0]?.trim();
-      const name =
-        brand && !baseName.toLowerCase().includes(brand.toLowerCase()) ? `${baseName} (${brand})` : baseName;
+      const name = brand && !baseName.toLowerCase().includes(brand.toLowerCase()) ? `${baseName} (${brand})` : baseName;
       const qty = parseOffQuantity(p.quantity);
       const category = guessCategory(p.categories_tags, source.category);
       return {
         name,
         quantity: qty?.quantity ?? null,
-        unit: qty?.unit ?? null,
+        size: qty?.size ?? null,
+        size_unit: qty?.size_unit ?? null,
         category,
         subcategory: guessSubcategory(p.categories_tags, category),
         barcode,

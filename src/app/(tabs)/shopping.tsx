@@ -1,22 +1,23 @@
+import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
-import { FlatList, Share, Text, View } from 'react-native';
+import { FlatList, Share, View } from 'react-native';
 
 import { ItemRow } from '@/components/item-row';
-import { confirmDeleteItems, SelectionBar, useSelection } from '@/components/selection';
-import { getAlerts } from '@/db/queries';
+import { DeleteSelectedButton, SelectionBar, useSelection } from '@/components/selection';
+import { TabHeaderButton } from '@/components/tab-header-button';
+import { useAlerts } from '@/lib/alerts';
 import { formatCategory } from '@/lib/catalog';
-import { formatLocation } from '@/lib/text';
-import { formatQuantity } from '@/lib/units';
-import { useQuery } from '@/lib/use-query';
-import { Button, EmptyState, Separator } from '@/ui/components';
-import { colors, font, spacing } from '@/ui/theme';
+import { formatNumber } from '@/lib/units';
+import { Button, EmptyState, Hint, Separator } from '@/ui/components';
+import { spacing } from '@/ui/theme';
 
 /** Shopping list: items at or below their minimum stock. */
 export default function ShoppingScreen() {
-  const { data, reload, db } = useQuery(getAlerts);
+  // Already loaded by AlertsProvider (tab badge), recomputed on every database change;
+  // `reload` right after a write so the list does not wait for it
+  const { alerts: data, refresh: reload } = useAlerts();
   const lowStock = data?.lowStock ?? [];
-  const { selected, clear, headerOptions, rowProps } = useSelection(lowStock.map((i) => i.id));
-  const chosen = selected ? lowStock.filter((i) => selected.has(i.id)) : [];
+  const { selected, chosen, done, headerOptions, rowProps } = useSelection(lowStock, reload);
 
   const share = () => {
     const byCategory = new Map<string, string[]>();
@@ -31,10 +32,8 @@ export default function ShoppingScreen() {
     Share.share({ message });
   };
 
-  const done = () => {
-    clear();
-    reload();
-  };
+  /** Something to buy that is not in stock yet: no quantity, expiry or freezing */
+  const addToList = () => router.push({ pathname: '/item/[id]', params: { id: 'new', shopping: '1' } });
 
   // Rendered in every branch: the header must leave selection mode even if the list empties
   const screen = (
@@ -43,7 +42,15 @@ export default function ShoppingScreen() {
         headerOptions ?? {
           title: 'Courses',
           headerLeft: undefined,
-          headerRight: undefined,
+          headerRight: () => (
+            <TabHeaderButton
+              icon="add"
+              size={20}
+              variant="filled"
+              label="Ajouter à la liste de courses"
+              onPress={addToList}
+            />
+          ),
         }
       }
     />
@@ -57,8 +64,9 @@ export default function ShoppingScreen() {
         <EmptyState
           icon="cart"
           title="Rien à racheter"
-          text="Renseigne un « stock minimum » sur un objet : dès qu’il en reste ce nombre ou moins, il apparaît ici."
-        />
+          text="Renseigne un « stock minimum » sur un objet : dès qu’il en reste ce nombre ou moins, il apparaît ici. Ou ajoute directement ce qu’il te faut avec +.">
+          <Button title="Ajouter à la liste" icon="add" onPress={addToList} />
+        </EmptyState>
       </>
     );
   }
@@ -73,17 +81,17 @@ export default function ShoppingScreen() {
         ItemSeparatorComponent={Separator}
         contentContainerStyle={{ paddingBottom: selected ? 100 : spacing.xl }}
         ListHeaderComponent={
-          <View style={{ padding: spacing.lg, gap: spacing.md }}>
+          <View style={{ padding: spacing.lg, paddingTop: spacing.xs, gap: spacing.md }}>
             <Button title="Partager la liste" icon="share" variant="secondary" onPress={share} />
-            <Text style={[font.small, { color: colors.textMuted }]}>
-              Acheté ? Choisis la quantité achetée avec − / + puis appuie sur « Ajouter » pour la mettre en stock.
-            </Text>
+            <Hint>Acheté ? Choisis combien avec − / + puis appuie sur « Ajouter » pour les mettre en stock.</Hint>
           </View>
         }
         renderItem={({ item }) => (
           <ItemRow
             item={item}
-            subtitle={`Min. ${formatQuantity(item.min_quantity ?? 0, item.unit)} · ${formatLocation(item)}`}
+            // Minimum 0 = added with + (to buy once): nothing to say
+            subtitle={item.min_quantity ? `Stock minimum : ${formatNumber(item.min_quantity)}` : undefined}
+            showLocation
             purchase
             onChanged={reload}
             {...rowProps(item.id)}
@@ -92,13 +100,7 @@ export default function ShoppingScreen() {
       />
       {selected && (
         <SelectionBar inTabs>
-          <Button
-            title={`Supprimer (${chosen.length})`}
-            icon="trash"
-            variant="danger"
-            onPress={() => confirmDeleteItems(db, chosen, done)}
-            style={{ flex: 1 }}
-          />
+          <DeleteSelectedButton items={chosen} onDone={done} />
         </SelectionBar>
       )}
     </View>

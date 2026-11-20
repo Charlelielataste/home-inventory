@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FlatList, View } from 'react-native';
 
-import { ItemRow } from '@/components/item-row';
+import { ItemCard } from '@/components/item-card';
 import { listAllItems } from '@/db/queries';
 import { formatLocation, matchesItem, normalize, plural } from '@/lib/text';
 import { useQuery } from '@/lib/use-query';
@@ -21,7 +21,7 @@ export default function SearchScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={{ padding: spacing.lg, paddingBottom: spacing.sm }}>
+      <View style={{ padding: spacing.lg, paddingTop: spacing.xs, paddingBottom: spacing.sm }}>
         <TextField
           value={query}
           onChangeText={setQuery}
@@ -47,7 +47,7 @@ export default function SearchScreen() {
           ItemSeparatorComponent={Separator}
           contentContainerStyle={{ paddingBottom: spacing.xl }}
           ListHeaderComponent={<SectionTitle>{plural(items.length, 'objet')}</SectionTitle>}
-          renderItem={({ item }) => <ItemRow item={item} subtitle={formatLocation(item)} onChanged={reload} />}
+          renderItem={({ item }) => <ItemCard item={item} location={formatLocation(item)} onChanged={reload} />}
         />
       )}
     </View>

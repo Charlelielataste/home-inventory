@@ -1,7 +1,6 @@
-import type { IconName } from '@/ui/icon';
-
-import { matchesWordStart, normalize } from './text';
-import type { UnitKey } from './units';
+import { normalize, rankByQuery } from '@/lib/text';
+import { isMeasureUnit, type MeasureUnit } from '@/lib/units';
+import { type IconName, isIconName } from '@/ui/icon';
 
 // ---------- Categories ----------
 
@@ -21,10 +20,14 @@ export const CATEGORIES = [
   'Autre',
 ] as const;
 
+/** Category is required: preselected for a manual entry (scan / suggestion overwrite it). */
+export const DEFAULT_CATEGORY = 'Autre';
+
 /**
  * Subcategories offered for each category (optional).
  * A missing or empty category = no subcategory offered.
  */
+// prettier-ignore
 export const SUBCATEGORIES: Record<string, string[]> = {
   Alimentaire: [
     'Viande', 'Poisson', 'Fruits', 'Légumes', 'Crèmerie', 'Épicerie sèche', 'Conserves',
@@ -44,6 +47,36 @@ export const SUBCATEGORIES: Record<string, string[]> = {
   Autre: ['Animaux', 'Maison', 'Décoration', 'Divers'],
 };
 
+/**
+ * Item form fields that only make sense for some categories.
+ * No category, or a category missing here = both fields shown (unknown use).
+ */
+const CATEGORY_FIELDS: Record<string, { expiry: boolean; frozen: boolean }> = {
+  Alimentaire: { expiry: true, frozen: true },
+  Boissons: { expiry: true, frozen: false },
+  // Bought already frozen: « Congelé » is for food the user froze themselves
+  Surgelés: { expiry: true, frozen: false },
+  Hygiène: { expiry: true, frozen: false },
+  Pharmacie: { expiry: true, frozen: false },
+  Entretien: { expiry: false, frozen: false },
+  Bricolage: { expiry: false, frozen: false },
+  Linge: { expiry: false, frozen: false },
+  Cuisine: { expiry: false, frozen: false },
+  Électronique: { expiry: false, frozen: false },
+  Papeterie: { expiry: false, frozen: false },
+  Loisirs: { expiry: false, frozen: false },
+};
+
+/** Whether the expiry date field makes sense for this category. */
+export function categoryHasExpiry(category: string | null): boolean {
+  return category ? (CATEGORY_FIELDS[category]?.expiry ?? true) : true;
+}
+
+/** Whether the « Congelé » checkbox makes sense for this category. */
+export function categoryCanFreeze(category: string | null): boolean {
+  return category ? (CATEGORY_FIELDS[category]?.frozen ?? true) : true;
+}
+
 /** Freezer-like furniture ("Congélateur", "Congel cave"…): putting an item there marks it as frozen. */
 export function isFreezer(furnitureName: string): boolean {
   return normalize(furnitureName).includes('congel');
@@ -57,6 +90,7 @@ export function formatCategory(category: string | null, subcategory: string | nu
 
 // ---------- Room / furniture suggestions ----------
 
+// prettier-ignore
 export const ROOM_SUGGESTIONS = [
   'Cuisine', 'Salon', 'Séjour', 'Salle à manger', 'Chambre', 'Chambre parentale', "Chambre d'amis",
   'Chambre enfant', 'Salle de bain', "Salle d'eau", 'WC', 'Entrée', 'Couloir', 'Bureau', 'Dressing',
@@ -66,6 +100,7 @@ export const ROOM_SUGGESTIONS = [
 
 export const DEFAULT_ROOMS = ['Cuisine', 'Salon', 'Chambre', 'Salle de bain', 'Entrée', 'Cellier'];
 
+// prettier-ignore
 export const FURNITURE_SUGGESTIONS = [
   'Frigo', 'Réfrigérateur', 'Congélateur', 'Cave à vin', 'Placard', 'Placard haut', 'Placard bas',
   'Garde-manger', 'Meuble sous évier', 'Tiroir', 'Tiroir à couverts', 'Range-épices', 'Vaisselier',
@@ -215,11 +250,39 @@ export function categoryIcon(category: string | null, subcategory: string | null
   return SUBCATEGORY_ICONS[`${category}/${subcategory}`] ?? CATEGORY_ICONS[category] ?? 'box';
 }
 
+// ---------- Displayed icon: custom ("Personnalisé") or automatic ----------
+
+/** Stored custom icon, if set and known to this build (null = automatic). */
+export function customIcon(icon: string | null | undefined): IconName | null {
+  return isIconName(icon) ? icon : null;
+}
+
+/** The custom icon if set (and known to this build), otherwise the automatic one. */
+function customOr(icon: string | null | undefined, fallback: IconName): IconName {
+  return customIcon(icon) ?? fallback;
+}
+
+export const roomIconOf = (room: { name: string; icon: string | null }) => customOr(room.icon, roomIcon(room.name));
+
+export const furnitureIconOf = (f: { name: string; icon: string | null }) => customOr(f.icon, furnitureIcon(f.name));
+
+export const itemIcon = (item: { category: string | null; subcategory: string | null; icon: string | null }) =>
+  customOr(item.icon, categoryIcon(item.category, item.subcategory));
+
 // ---------- Offline autocomplete dictionary ----------
 
-export type CatalogEntry = { name: string; unit: UnitKey; category: string; subcategory: string | null };
+/** `size_unit`: unit preselected for the size (no value: the user knows it), null = counted only. */
+type CatalogEntry = {
+  name: string;
+  size_unit: MeasureUnit | null;
+  category: string;
+  subcategory: string | null;
+};
 
-/** Format: "Name|unit|Category|Subcategory" — deliberately easy to extend. */
+/**
+ * Format: "Name|unit|Category|Subcategory" — deliberately easy to extend.
+ * unit = g, kg, ml, l, cm, m (unit of the size); anything else ("pcs") = no size unit.
+ */
 const RAW = `
 Pâtes|g|Alimentaire|Épicerie sèche
 Riz|g|Alimentaire|Épicerie sèche
@@ -424,14 +487,20 @@ Croquettes|kg|Autre|Animaux
 Litière|kg|Autre|Animaux
 `;
 
-export const CATALOG: CatalogEntry[] = RAW.trim()
+const CATALOG: CatalogEntry[] = RAW.trim()
   .split('\n')
   .map((line) => {
     const [name, unit, category, subcategory] = line.split('|');
-    return { name, unit: unit as UnitKey, category, subcategory: subcategory || null };
+    return { name, size_unit: isMeasureUnit(unit) ? unit : null, category, subcategory: subcategory || null };
   });
 
-export type Suggestion = CatalogEntry & { source: 'history' | 'catalog' };
+/** `icon`: custom icon remembered with the product (history only). */
+export type Suggestion = CatalogEntry & {
+  source: 'history' | 'catalog';
+  icon: IconName | null;
+  /** Size remembered with the product (history only) */
+  size: number | null;
+};
 
 /**
  * Ranked suggestions: what the user already entered first,
@@ -439,37 +508,28 @@ export type Suggestion = CatalogEntry & { source: 'history' | 'catalog' };
  */
 export function suggest(
   query: string,
-  history: { name: string; unit: UnitKey | null; category: string | null; subcategory: string | null }[],
+  history: {
+    name: string;
+    size: number | null;
+    size_unit: MeasureUnit | null;
+    category: string | null;
+    subcategory: string | null;
+    icon: string | null;
+  }[],
   limit = 6,
 ): Suggestion[] {
-  const q = normalize(query);
-  if (!q) return [];
-
   const pool: Suggestion[] = [
     ...history.map((h) => ({
       name: h.name,
-      unit: h.unit ?? 'pcs',
+      size: h.size,
+      size_unit: h.size_unit,
       category: h.category ?? '',
       subcategory: h.subcategory,
       source: 'history' as const,
+      icon: customIcon(h.icon),
     })),
-    ...CATALOG.map((c) => ({ ...c, source: 'catalog' as const })),
+    ...CATALOG.map((c) => ({ ...c, source: 'catalog' as const, icon: null, size: null })),
   ];
-
-  // Word start only: "poul" suggests "Poulet", not "Ampoules".
-  // Order: exact name, then "starts with", then another word of the name matching.
-  const seen = new Set<string>();
-  const exact: Suggestion[] = [];
-  const starts: Suggestion[] = [];
-  const others: Suggestion[] = [];
-  for (const s of pool) {
-    const n = normalize(s.name);
-    if (seen.has(n)) continue;
-    if (n === q) exact.push(s);
-    else if (n.startsWith(q)) starts.push(s);
-    else if (matchesWordStart(n, q)) others.push(s);
-    else continue;
-    seen.add(n);
-  }
-  return [...exact, ...starts, ...others].slice(0, limit);
+  // Word start only: "poul" suggests "Poulet", not "Ampoules"; the exact name first
+  return rankByQuery(query, pool, (s) => s.name, { limit });
 }

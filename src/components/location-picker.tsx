@@ -2,7 +2,7 @@ import { Modal, Platform, SectionList, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { FurnitureWithRoom } from '@/db/queries';
-import { furnitureIcon } from '@/lib/catalog';
+import { furnitureIconOf } from '@/lib/catalog';
 import { Icon, IconButton, ListRow, SectionTitle, Separator } from '@/ui/components';
 import { colors, font, spacing } from '@/ui/theme';
 
@@ -39,7 +39,7 @@ export function LocationPicker({ visible, furniture, selectedId, onSelect, onClo
             paddingHorizontal: spacing.lg,
           }}>
           <Text style={font.title}>Emplacement</Text>
-          <IconButton icon="close" label="Fermer" onPress={onClose} />
+          <IconButton icon="close" label="Fermer" feedback="close" onPress={onClose} />
         </View>
         <SectionList
           sections={sections}
@@ -51,12 +51,11 @@ export function LocationPicker({ visible, furniture, selectedId, onSelect, onClo
           renderItem={({ item }) => (
             <ListRow
               title={item.name}
-              icon={furnitureIcon(item.name)}
+              icon={furnitureIconOf(item)}
               tintKey={item.name}
+              feedback="tick"
               onPress={() => onSelect(item.id)}
-              right={
-                item.id === selectedId ? <Icon name="check" size={22} color={colors.primary} /> : undefined
-              }
+              right={item.id === selectedId ? <Icon name="check" size={22} color={colors.primary} /> : undefined}
             />
           )}
         />

@@ -1,3 +1,8 @@
+import { freezerWarningMonths } from '@/lib/reminder-prefs';
+
+// Reminder delays (user preferences), re-exported here for the date helpers' callers
+export { describeExpiryWindow, expiryWarningDays, freezerWarningMonths } from '@/lib/reminder-prefs';
+
 /** Dates are stored as ISO "YYYY-MM-DD" and displayed as "DD/MM/YYYY". */
 
 function pad(n: number) {
@@ -61,14 +66,16 @@ export function describeExpiry(iso: string): string {
   return `À consommer avant le ${isoToFr(iso)}`;
 }
 
-/** Threshold (in days) below which a product is "expiring soon". */
-export const EXPIRY_WARNING_DAYS = 7;
-
-/**
- * Freezer: warn after FREEZER_WARNING_MONTHS months.
- * "Ignorer" postpones the reminder by the same delay, indefinitely.
- */
-export const FREEZER_WARNING_MONTHS = 3;
+/** Short form for tight spots (lines of an item card): « dans 3 j », « demain », « périmé depuis 2 j ». Null past a month: the date says it. */
+export function shortExpiry(iso: string): string | null {
+  const days = daysUntil(iso);
+  if (days < -1) return `périmé depuis ${-days} j`;
+  if (days === -1) return 'périmé hier';
+  if (days === 0) return "aujourd'hui";
+  if (days === 1) return 'demain';
+  if (days <= 31) return `dans ${days} j`;
+  return null;
+}
 
 /**
  * Out of the freezer: eat within THAWED_SHELF_DAYS days
@@ -76,19 +83,24 @@ export const FREEZER_WARNING_MONTHS = 3;
  */
 export const THAWED_SHELF_DAYS = 2;
 
-/** Full months elapsed since the date (0 if in the future). */
-export function monthsSince(iso: string): number {
-  const [y, m, d] = iso.split('-').map(Number);
-  const now = new Date();
-  let months = (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
-  if (now.getDate() < d) months -= 1;
+/** Full months elapsed from `fromIso` to `toIso` (0 if `toIso` is earlier). */
+export function monthsBetween(fromIso: string, toIso: string): number {
+  const [y1, m1, d1] = fromIso.split('-').map(Number);
+  const [y2, m2, d2] = toIso.split('-').map(Number);
+  let months = (y2 - y1) * 12 + (m2 - m1);
+  if (d2 < d1) months -= 1;
   return Math.max(0, months);
 }
 
-/** Frozen for more than FREEZER_WARNING_MONTHS months and reminder not snoozed. */
+/** Full months elapsed since the date (0 if in the future). */
+export function monthsSince(iso: string): number {
+  return monthsBetween(iso, todayIso());
+}
+
+/** Frozen for more than freezerWarningMonths() months and reminder not snoozed. */
 export function frozenNeedsCheck(frozenAt: string | null, snoozedUntil: string | null): boolean {
   if (!frozenAt) return false;
-  if (frozenAt > addToToday({ months: -FREEZER_WARNING_MONTHS })) return false;
+  if (frozenAt > addToToday({ months: -freezerWarningMonths() })) return false;
   return !snoozedUntil || snoozedUntil <= todayIso();
 }
 
@@ -101,6 +113,18 @@ export function addMonthsToIso(iso: string, months: number): string {
   const first = new Date(y, m - 1 + months, 1);
   const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
   return toIso(new Date(first.getFullYear(), first.getMonth(), Math.min(d, lastDay)));
+}
+
+/**
+ * First day on which `frozenAt` is at least `months` months old, with the same rule as the
+ * Péremption tab (`frozen_at <= addToToday({ months: -N })`): usually `frozenAt` + N months,
+ * but the day after when the day was clamped (31/08 + 6 months = 28/02, listed from 01/03).
+ */
+export function monthsLaterIso(frozenAt: string, months: number): string {
+  const due = addMonthsToIso(frozenAt, months);
+  if (due.slice(8) === frozenAt.slice(8)) return due;
+  const [y, m, d] = due.split('-').map(Number);
+  return toIso(new Date(y, m - 1, d + 1));
 }
 
 /** Local Date for `iso` + `dayOffset` days, at `hour`:00. */

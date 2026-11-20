@@ -3,50 +3,32 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { adjustQuantity, type Item } from '@/db/queries';
-import { daysUntil, EXPIRY_WARNING_DAYS, frozenNeedsCheck, monthsSince } from '@/lib/dates';
-import { formatQuantity, getUnit } from '@/lib/units';
-import { type BadgeSpec, Button, CheckMark, IconButton, ListRow } from '@/ui/components';
-import { colors, font, fonts, spacing } from '@/ui/theme';
-import { categoryIcon, formatCategory } from '@/lib/catalog';
-
-export function itemBadges(item: Item): BadgeSpec[] {
-  const badges: BadgeSpec[] = [];
-  if (item.quantity === 0) badges.push({ label: 'ÉPUISÉ', tone: 'out' });
-  else if (item.min_quantity !== null && item.quantity <= item.min_quantity) {
-    badges.push({ label: 'STOCK BAS', tone: 'low' });
-  }
-  if (item.frozen_at) {
-    badges.push({
-      label: frozenNeedsCheck(item.frozen_at, item.frozen_snoozed_until)
-        ? `CONGELÉ DEPUIS ${monthsSince(item.frozen_at)} MOIS`
-        : 'CONGELÉ',
-      tone: 'frozen',
-    });
-  } else if (item.expires_at) {
-    const d = daysUntil(item.expires_at);
-    if (d < 0) badges.push({ label: 'PÉRIMÉ', tone: 'expired' });
-    else if (d <= EXPIRY_WARNING_DAYS) {
-      badges.push({ label: d === 0 ? "PÉRIME AUJOURD'HUI" : `PÉRIME DANS ${d} J`, tone: 'soon' });
-    }
-  }
-  return badges;
-}
+import { RestockDateModal } from '@/components/batch-editor';
+import { addStock, type Item } from '@/db/queries';
+import { itemBadges } from '@/lib/badges';
+import { categoryHasExpiry, formatCategory, itemIcon } from '@/lib/catalog';
+import { giveFeedback } from '@/lib/feedback';
+import { formatLocation } from '@/lib/text';
+import { formatNumber, formatStock } from '@/lib/units';
+import { Button, Hint, ListRow, SelectionMark, Stepper } from '@/ui/components';
+import { colors, font, spacing } from '@/ui/theme';
 
 type Props = {
-  item: Item;
-  /** Secondary text (e.g. location). Defaults to the category. */
-  subtitle?: string;
-  /** Shows the − / + buttons; called after each quantity change (e.g. reload). */
+  /** With its location (`ItemWithLocation`) for `showLocation` */
+  item: Item & { room_name?: string; furniture_name?: string };
+  /** Secondary text (e.g. location), an array = one line each. Defaults to the category. */
+  subtitle?: string | string[];
+  /** Line of its own above the footer; wins over `showLocation` */
+  note?: { label: string; value: string };
+  /** Shows « Rangé dans : Pièce › Rangement » on a line of its own (needs `room_name` / `furniture_name`) */
+  showLocation?: boolean;
+  /** Called after the stock changed (shopping mode). */
   onChanged?: () => void;
-  /** Action button shown on the right instead of the quantity (e.g. "Ignorer"). */
-  action?: { label: string; onPress: () => void };
+  /** Action button shown on the right instead of the quantity (e.g. "Ignorer"); plays its own feedback. */
+  action?: { label: string; onPress: () => void; variant?: 'secondary' | 'warn' };
   /** Long press (e.g. start selecting several items). */
   onLongPress?: () => void;
-  /**
-   * Selection mode: a tap toggles the item, a checkbox replaces the quantity
-   * and the − / + buttons.
-   */
+  /** Selection mode: a tap toggles the item, a checkbox replaces the quantity. */
   selection?: { selected: boolean; onToggle: () => void };
   /**
    * Shopping mode: − / + (under the item) choose the amount bought (not saved), "Ajouter"
@@ -55,69 +37,84 @@ type Props = {
   purchase?: boolean;
 };
 
-export function ItemRow({ item, subtitle, onChanged, action, onLongPress, selection, purchase }: Props) {
+export function ItemRow({
+  item,
+  subtitle,
+  note,
+  showLocation,
+  onChanged,
+  action,
+  onLongPress,
+  selection,
+  purchase,
+}: Props) {
   const db = useSQLiteContext();
-  const step = getUnit(item.unit).step;
-  // Shopping mode: − / + are in the footer and choose the amount bought instead
-  const onAdjust =
-    onChanged && !purchase
-      ? async (delta: number) => {
-          await adjustQuantity(db, item.id, delta);
-          onChanged();
-        }
-      : undefined;
-  // Shopping mode: amount bought, one step by default
-  const [bought, setBought] = useState(step);
-  const changeBought = (delta: number) => setBought((b) => Math.max(step, Math.round((b + delta) * 1000) / 1000));
+  // Shopping mode: number of items bought, 1 by default
+  const [bought, setBought] = useState(1);
+  const changeBought = (delta: number) => setBought((b) => Math.max(1, b + delta));
   // A quick double tap must not add the purchase twice
   const adding = useRef(false);
-  const addBought = async () => {
+  // Something that expires: its date is asked first (optional), kept apart from the stock left
+  const [askDate, setAskDate] = useState(false);
+  const onBuy = () => (categoryHasExpiry(item.category) && !item.frozen_at ? setAskDate(true) : addBought(null));
+  const addBought = async (expiresAt: string | null) => {
+    setAskDate(false);
     if (adding.current) return;
     adding.current = true;
     try {
-      await adjustQuantity(db, item.id, bought);
-      setBought(step);
+      await addStock(db, item.id, bought, expiresAt);
+      giveFeedback('success');
+      setBought(1);
       onChanged?.();
     } finally {
       adding.current = false;
     }
   };
+  const located =
+    showLocation && item.room_name !== undefined && item.furniture_name !== undefined
+      ? {
+          label: 'Rangé dans :',
+          value: formatLocation({ room_name: item.room_name, furniture_name: item.furniture_name }),
+        }
+      : undefined;
+  const stock = formatStock(item, { pieces: true });
   return (
     <ListRow
       title={item.name}
       subtitle={subtitle ?? formatCategory(item.category, item.subcategory) ?? undefined}
-      icon={categoryIcon(item.category, item.subcategory)}
+      icon={itemIcon(item)}
       tintKey={item.category ?? undefined}
       badges={itemBadges(item)}
+      note={note ?? located}
       selected={selection?.selected}
+      feedback={selection ? 'tick' : 'tap'}
       footer={
         purchase && !selection ? (
           <>
-            <Text style={[font.small, { color: colors.textMuted }]}>Acheté</Text>
-            <IconButton
-              icon="remove"
-              size={16}
-              variant="soft"
-              label={`Acheté : ${formatQuantity(step, item.unit)} de moins`}
-              onPress={() => changeBought(-step)}
+            {/* No label: the button says how many are added ("Ajouter 3") */}
+            <Stepper
+              value={formatNumber(bought)}
+              onStep={changeBought}
+              decreaseLabel={`${item.name} : en ajouter 1 de moins`}
+              increaseLabel={`${item.name} : en ajouter 1 de plus`}
+              valueWidth={24}
+              style={{ gap: spacing.sm }}
             />
-            <Text
-              style={{ minWidth: 64, textAlign: 'center', fontFamily: fonts.bold, fontSize: 15, color: colors.text }}>
-              {formatQuantity(bought, item.unit)}
-            </Text>
-            <IconButton
-              icon="add"
-              size={16}
-              variant="soft"
-              label={`Acheté : ${formatQuantity(step, item.unit)} de plus`}
-              onPress={() => changeBought(step)}
-            />
-            <View style={{ flex: 1 }} />
+            {/* Pushed to the right edge (a flex: 1 spacer made it overflow the card on iOS) */}
             <Button
-              title="Ajouter"
+              title={`Ajouter ${formatNumber(bought)}`}
               icon="cart-add"
-              onPress={addBought}
-              style={{ minHeight: 40, paddingVertical: 8, paddingHorizontal: spacing.md }}
+              feedback={false}
+              onPress={onBuy}
+              style={{ marginLeft: 'auto', minHeight: 40, paddingVertical: 8, paddingHorizontal: spacing.md }}
+            />
+            <RestockDateModal
+              visible={askDate}
+              title={`${formatNumber(bought)} × ${item.name}`}
+              bought={bought}
+              inStock={item.quantity}
+              onDone={addBought}
+              onClose={() => setAskDate(false)}
             />
           </>
         ) : undefined
@@ -126,50 +123,26 @@ export function ItemRow({ item, subtitle, onChanged, action, onLongPress, select
       onLongPress={selection ? selection.onToggle : onLongPress}
       right={
         selection ? (
-          <View style={{ alignItems: 'center', gap: 6, minWidth: 74 }}>
-            <CheckMark checked={selection.selected} />
-            <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.textMuted }}>
-              {formatQuantity(item.quantity, item.unit)}
-            </Text>
-          </View>
+          <SelectionMark checked={selection.selected} text={stock} muted />
         ) : action ? (
           <Button
             title={action.label}
-            variant="secondary"
+            variant={action.variant ?? 'secondary'}
+            feedback={false}
             onPress={action.onPress}
             style={{ paddingVertical: 6, paddingHorizontal: 12 }}
           />
         ) : (
           <View style={{ alignItems: 'center', gap: 4 }}>
-            {onAdjust && (
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                <IconButton
-                  icon="remove"
-                  size={16}
-                  variant="soft"
-                  label={`Retirer ${formatQuantity(step, item.unit)}`}
-                  onPress={() => onAdjust(-step)}
-                />
-                <IconButton
-                  icon="add"
-                  size={16}
-                  variant="soft"
-                  label={`Ajouter ${formatQuantity(step, item.unit)}`}
-                  onPress={() => onAdjust(step)}
-                />
-              </View>
-            )}
             <Text
-              style={{
-                minWidth: 74,
-                textAlign: 'center',
-                fontFamily: fonts.bold,
-                fontSize: 14,
-                color: item.quantity === 0 ? colors.textMuted : colors.text,
-              }}>
-              {formatQuantity(item.quantity, item.unit)}
+              style={[
+                font.number,
+                { minWidth: 74, textAlign: 'center', fontSize: 14 },
+                item.quantity === 0 && { color: colors.textMuted },
+              ]}>
+              {stock}
             </Text>
-            {purchase && <Text style={[font.small, { color: colors.textMuted, fontSize: 12 }]}>en stock</Text>}
+            {purchase && <Hint style={{ fontSize: 12 }}>en stock</Hint>}
           </View>
         )
       }

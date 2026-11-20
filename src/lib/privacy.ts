@@ -7,7 +7,6 @@
 
 export const PRIVACY_URL = 'https://charlelielataste.github.io/home-inventory/privacy/';
 export const PRIVACY_UPDATED = '16 novembre 2026';
-export const PRIVACY_CONTACT = 'https://github.com/Charlelielataste/home-inventory/issues';
 
 export const PRIVACY_INTRO =
   'Chez Moi est une application d’inventaire de la maison qui fonctionne entièrement sur ton téléphone. Cette page explique, simplement, ce qu’elle fait (et ne fait pas) de tes données.';

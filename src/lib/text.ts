@@ -1,3 +1,4 @@
+// prettier-ignore
 const ACCENTS: Record<string, string> = {
   à: 'a', â: 'a', ä: 'a', á: 'a', ã: 'a', å: 'a',
   ç: 'c',
@@ -22,43 +23,65 @@ export function capitalize(text: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
+/** What separates words, in the text AND in the query: "demi-écrémé", "huile d'olive", "Alimentaire › Viande". */
+const WORD_SEPARATORS = /[\s'’,.()/›-]+/;
+
 /**
  * Does the query match the text (both already normalized)?
  * Each typed word must be the START of a word in the text: "poul" finds "Poulet"
- * but not "Ampoules"; "lait dem" finds "Lait demi-écrémé".
+ * but not "Ampoules"; "lait dem" and "demi-ecr" find "Lait demi-écrémé".
  */
 export function matchesWordStart(normalizedText: string, normalizedQuery: string): boolean {
-  const words = normalizedText.split(/[\s'’,.()/›-]+/);
-  return normalizedQuery
-    .split(/\s+/)
-    .filter(Boolean)
-    .every((q) => words.some((w) => w.startsWith(q)));
+  const queryWords = normalizedQuery.split(WORD_SEPARATORS).filter(Boolean);
+  // Punctuation only ("-"): no word to look for, nothing matches
+  if (queryWords.length === 0) return false;
+  const words = normalizedText.split(WORD_SEPARATORS);
+  return queryWords.every((q) => words.some((w) => w.startsWith(q)));
 }
 
 /**
- * Filters a list of names for autocomplete (word start only):
- * names starting with the query first, then names where another word matches.
- * Ignores case, accents and duplicates; excludes the exact match.
+ * Ranks autocomplete candidates (word start only): exact name first, then names
+ * starting with the query, then names where another word matches; others are dropped.
+ * Ignores case, accents and duplicates (the first one wins). `exact: false` drops the exact match.
  */
-export function filterByQuery(query: string, names: string[], limit = 6): string[] {
+export function rankByQuery<T>(
+  query: string,
+  candidates: Iterable<T>,
+  nameOf: (candidate: T) => string,
+  { limit = 6, exact = true }: { limit?: number; exact?: boolean } = {},
+): T[] {
   const q = normalize(query);
   if (!q) return [];
   const seen = new Set<string>();
-  const starts: string[] = [];
-  const others: string[] = [];
-  for (const name of names) {
-    const n = normalize(name);
-    if (seen.has(n) || n === q) continue;
+  const exactMatches: T[] = [];
+  const starts: T[] = [];
+  const others: T[] = [];
+  for (const candidate of candidates) {
+    const n = normalize(nameOf(candidate));
+    if (seen.has(n)) continue;
+    if (n === q) {
+      if (exact) exactMatches.push(candidate);
+    } else if (n.startsWith(q)) starts.push(candidate);
+    else if (matchesWordStart(n, q)) others.push(candidate);
+    else continue;
     seen.add(n);
-    if (n.startsWith(q)) starts.push(name);
-    else if (matchesWordStart(n, q)) others.push(name);
   }
-  return [...starts, ...others].slice(0, limit);
+  return [...exactMatches, ...starts, ...others].slice(0, limit);
+}
+
+/** Names for autocomplete (see rankByQuery), without the exact match (already typed). */
+export function filterByQuery(query: string, names: string[], limit = 6): string[] {
+  return rankByQuery(query, names, (name) => name, { limit, exact: false });
 }
 
 /** "1 objet", "3 objets", "0 objet". */
 export function plural(n: number, word: string, pluralWord = `${word}s`): string {
   return `${n} ${n > 1 ? pluralWord : word}`;
+}
+
+/** "1 objet sera supprimé" / "3 objets seront supprimés" (deletion confirmations) */
+export function willBeDeleted(n: number, word: string): string {
+  return `${plural(n, word)} ${n > 1 ? 'seront supprimés' : 'sera supprimé'}`;
 }
 
 /** "Cuisine › Frigo" */

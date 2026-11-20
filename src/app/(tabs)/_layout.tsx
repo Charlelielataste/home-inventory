@@ -6,6 +6,7 @@ import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { alertCounts, useAlerts } from '@/lib/alerts';
+import { giveFeedback } from '@/lib/feedback';
 import { REMINDER_ROUTE } from '@/lib/reminders';
 import { Icon, type IconName } from '@/ui/icon';
 import { colors, fonts } from '@/ui/theme';
@@ -59,6 +60,8 @@ export default function TabsLayout() {
   useReminderTaps();
   return (
     <Tabs
+      // Vibration only (`tap` has no sound)
+      screenListeners={{ tabPress: () => giveFeedback('tap') }}
       screenOptions={{
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,

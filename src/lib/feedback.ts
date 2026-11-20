@@ -5,7 +5,8 @@ import { Platform } from 'react-native';
 import { createKvPref, savedRecord } from '@/lib/kv-pref';
 
 /**
- * Touch feedback: a short sound and/or a vibration per kind of action.
+ * Touch feedback: a vibration per kind of action, and a short sound for the ones that matter
+ * (− / +, checkboxes, save, delete, error, scan; buttons and screens only vibrate: user's choice).
  * Base components (Button, IconButton, ListRow, Chip…) play one by default;
  * business actions (save, delete, scan) play their own.
  *
@@ -15,12 +16,12 @@ import { createKvPref, savedRecord } from '@/lib/kv-pref';
  */
 export type Feedback = 'tap' | 'tick' | 'open' | 'close' | 'hold' | 'success' | 'delete' | 'error' | 'scan';
 
-/** Every kind has a sound except `hold` (vibration only): a missing file is a type error. */
-const SOUNDS: Record<Exclude<Feedback, 'hold'>, number> = {
-  tap: require('../../assets/sounds/tap.m4a'),
+/** Kinds that only vibrate (too frequent for a sound: user's choice). */
+type SilentFeedback = 'tap' | 'open' | 'close' | 'hold';
+
+/** Every other kind has a sound: a missing file is a type error. */
+const SOUNDS: Record<Exclude<Feedback, SilentFeedback>, number> = {
   tick: require('../../assets/sounds/tick.m4a'),
-  open: require('../../assets/sounds/open.m4a'),
-  close: require('../../assets/sounds/close.m4a'),
   success: require('../../assets/sounds/success.mp3'),
   delete: require('../../assets/sounds/delete.m4a'),
   error: require('../../assets/sounds/error.m4a'),
@@ -63,15 +64,6 @@ export function preloadFeedback() {
     try {
       const player = createAudioPlayer(source);
       player.volume = VOLUME;
-      // Rewind as soon as a sound ends, so the next play() starts right away. Calling
-      // seekTo(0) just before play() is not enough: the seek is async and a player that
-      // has reached the end stays silent (heard on a real device: each sound played once).
-      // pause() first: a finished player is still "playing" and would restart on its own.
-      player.addListener('playbackStatusUpdate', (status) => {
-        if (!status.didJustFinish) return;
-        player.pause();
-        player.seekTo(0).catch(() => {});
-      });
       players[kind] = player;
     } catch {
       // No sound for this kind
@@ -83,9 +75,15 @@ function playSound(kind: Feedback) {
   const player = players[kind];
   if (!player) return;
   try {
-    // Still playing (fast − / + taps): restart it from the beginning
-    if (player.playing) player.seekTo(0).catch(() => {});
-    else player.play();
+    // Always rewind, then play once the (async) seek is done: a player left at the end of its
+    // sound stays silent. No rewind on "finished" events: one arriving late paused the next
+    // play, so some sounds were randomly skipped (heard on a real device). pause() first: a
+    // finished player still reports "playing" and would not start again.
+    player.pause();
+    player
+      .seekTo(0)
+      .then(() => player.play())
+      .catch(() => {});
   } catch {
     // Feedback must never break an action
   }

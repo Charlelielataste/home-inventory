@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Keyboard, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
- * Height of the on-screen keyboard (0 when hidden).
+ * Height covered by the on-screen keyboard from the bottom edge of the screen (0 when hidden).
  *
  * Used instead of KeyboardAvoidingView for screens whose bottom edge is the
  * screen's bottom edge (iOS page sheet modal, Android edge-to-edge): the
@@ -10,6 +11,10 @@ import { Keyboard, Platform } from 'react-native';
  */
 export function useKeyboardHeight(): number {
   const [height, setHeight] = useState(0);
+  // Android reports the keyboard height minus the navigation bar under it: the footer
+  // stayed hidden behind the keyboard by that much (iOS: the full height)
+  const { bottom } = useSafeAreaInsets();
+  const navigationBar = Platform.OS === 'android' ? bottom : 0;
 
   useEffect(() => {
     // iOS: "will" events to move along with the keyboard animation
@@ -23,5 +28,5 @@ export function useKeyboardHeight(): number {
     };
   }, []);
 
-  return height;
+  return height > 0 ? height + navigationBar : 0;
 }

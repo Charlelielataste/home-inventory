@@ -97,7 +97,7 @@ type NameFieldProps = Omit<TextInputProps, 'value' | 'onChangeText' | 'style'> &
 
 /**
  * Name field with two optional helpers, always visible under it:
- * - « Une suggestion ? » opens the list of suggestions, filtered while typing;
+ * - « Suggestions » opens the list of suggestions, filtered while typing;
  * - « Personnalisé » opens a grid of illustrations to choose the icon.
  * Neither is required: without them, the exact typed text and the automatic icon are kept.
  * Picking a suggestion then « Personnalisé » keeps the text and only changes the icon.
@@ -144,8 +144,8 @@ export function NameField({
       </View>
       <View style={{ flexDirection: 'row', gap: spacing.sm }}>
         <Chip
-          label="Une suggestion ?"
-          icon="thinking-face"
+          label="Suggestions"
+          icon="sparkles"
           selected={panel === 'suggest'}
           onPress={() => toggle('suggest')}
           style={styles.nameFieldButton}

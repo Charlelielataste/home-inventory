@@ -20,7 +20,7 @@ type Props = {
 
 /**
  * Item name: NameField with 100% offline suggestions (the user's history first,
- * then the built-in dictionary), shown only on « Une suggestion ? ».
+ * then the built-in dictionary), shown only on « Suggestions ».
  */
 export function AutocompleteInput({ history, onSelect, ...props }: Props) {
   const suggestions = suggest(props.value, history);
